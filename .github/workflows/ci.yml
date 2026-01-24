@@ -45,6 +45,10 @@ jobs:
       run: |
         pip install .
     
+    - name: Install SigProfilerAssignment from experimental branch
+      run: |
+        pip install --upgrade --force-reinstall "git+https://github.com/SigProfilerSuite/SigProfilerAssignment.git@python-312-fix-p2"
+    
     - name: Install genome
       run: |
         python install_genome.py ${{ github.workspace }}/src/
