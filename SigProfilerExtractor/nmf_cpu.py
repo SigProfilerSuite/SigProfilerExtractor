@@ -254,17 +254,15 @@ class NMF:
                     # Unlikely on CPU; maintained for parity with GPU impl.
                     V, W, H = self._V, self._W, self._H
                 for self._iter in range(self.max_iterations):
-                    WH = W @ H
-                    ratio = V / WH
-                    W.mul_(ratio @ H.transpose(-2, -1)).div_(
-                        H.sum(dim=-1, keepdim=True).transpose(-2, -1)
-                    )
+                    ratio = V / (W @ H)
+                    numerator = ratio @ H.transpose(-2, -1)
+                    denominator = H.sum(dim=-1, keepdim=True).transpose(-2, -1)
+                    W *= numerator / denominator
 
-                    WH = W @ H
-                    ratio = V / WH
-                    H.mul_(W.transpose(-2, -1) @ ratio).div_(
-                        W.sum(dim=-2, keepdim=True).transpose(-2, -1)
-                    )
+                    ratio = V / (W @ H)
+                    numerator = W.transpose(-2, -1) @ ratio
+                    denominator = W.sum(dim=-2, keepdim=True).transpose(-2, -1)
+                    H *= numerator / denominator
                     if stop_iterations()[0]:
                         self._conv = stop_iterations()[1]
                         break
