@@ -33,7 +33,7 @@ class NMF:
         min_iterations=2000,
     ):
         """
-        Run non-negative matrix factorisation using GPU. Uses beta-divergence.
+        Run non-negative matrix factorisation using CPU. Uses beta-divergence.
 
         Args:
           V: Matrix to be factorised
@@ -242,25 +242,16 @@ class NMF:
 
             # Optimisations for the (common) beta=1 (KL) case.
             elif beta == 1:
-                # The multiplicative-update denominators for KL are
-                # `ones @ H^T` and `W^T @ ones`, which reduce to row/col sums
-                # of H and W. Using sum reductions instead of matmuls against
-                # an all-ones tensor removes two matmuls per iter and the
-                # ones-tensor allocation entirely.
-                #
-                # Fast-path the `batch_size == 1` case (the 2D shim added in
-                # commit e203320 "refactoring host code to allow batch NMF" —
-                # always hit on CPU, default config on GPU) by squeezing to
-                # 2D views up front. torch.mm avoids the per-call dispatch
-                # cost that torch.bmm carries on small matrices. The 2D views
-                # share storage with the 3D self._W / self._H, so in-place
-                # updates propagate. `transpose(-2, -1)` and `dim=-1`/`-2`
-                # let the same loop body handle 2D and 3D uniformly.
                 if self._V.shape[0] == 1:
+                    # For batch size == 1, the 2D torch.mm kernel avoids
+                    # some of the torch.bmm overhead, which is noticeable
+                    # at typical problem sizes. transpose(-2, -1) later
+                    # lets the same loop body handle 2D and 3D consistently.
                     V = self._V.squeeze(0)
                     W = self._W.squeeze(0)
                     H = self._H.squeeze(0)
                 else:
+                    # Unlikely on CPU; maintained for parity with GPU impl.
                     V, W, H = self._V, self._W, self._H
                 for self._iter in range(self.max_iterations):
                     WH = W @ H
