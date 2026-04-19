@@ -242,18 +242,38 @@ class NMF:
 
             # Optimisations for the (common) beta=1 (KL) case.
             elif beta == 1:
-                ones = torch.ones(self._V.shape).type(self._tensor_type)
+                # The multiplicative-update denominators for KL are
+                # `ones @ H^T` and `W^T @ ones`, which reduce to row/col sums
+                # of H and W. Using sum reductions instead of matmuls against
+                # an all-ones tensor removes two matmuls per iter and the
+                # ones-tensor allocation entirely.
+                #
+                # Fast-path the `batch_size == 1` case (the 2D shim added in
+                # commit e203320 "refactoring host code to allow batch NMF" —
+                # always hit on CPU, default config on GPU) by squeezing to
+                # 2D views up front. torch.mm avoids the per-call dispatch
+                # cost that torch.bmm carries on small matrices. The 2D views
+                # share storage with the 3D self._W / self._H, so in-place
+                # updates propagate. `transpose(-2, -1)` and `dim=-1`/`-2`
+                # let the same loop body handle 2D and 3D uniformly.
+                if self._V.shape[0] == 1:
+                    V = self._V.squeeze(0)
+                    W = self._W.squeeze(0)
+                    H = self._H.squeeze(0)
+                else:
+                    V, W, H = self._V, self._W, self._H
                 for self._iter in range(self.max_iterations):
-                    ht = self.H.transpose(1, 2)
-                    numerator = (self._V / (self.W @ self.H)) @ ht
+                    WH = W @ H
+                    ratio = V / WH
+                    W.mul_(ratio @ H.transpose(-2, -1)).div_(
+                        H.sum(dim=-1, keepdim=True).transpose(-2, -1)
+                    )
 
-                    denomenator = ones @ ht
-                    self._W *= numerator / denomenator
-
-                    wt = self.W.transpose(1, 2)
-                    numerator = wt @ (self._V / (self.W @ self.H))
-                    denomenator = wt @ ones
-                    self._H *= numerator / denomenator
+                    WH = W @ H
+                    ratio = V / WH
+                    H.mul_(W.transpose(-2, -1) @ ratio).div_(
+                        W.sum(dim=-2, keepdim=True).transpose(-2, -1)
+                    )
                     if stop_iterations()[0]:
                         self._conv = stop_iterations()[1]
                         break
