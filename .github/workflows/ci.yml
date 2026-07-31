@@ -70,7 +70,11 @@ jobs:
     - name: Install genome
       run: |
         python install_genome.py ${{ github.workspace }}/src/
-    
+
+    - name: Run unit tests
+      run: |
+        python -m unittest discover -s tests -v
+
     - name: Run tests
       run: |
         python3 test.py

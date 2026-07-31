@@ -55,6 +55,9 @@ from SigProfilerAssignment import decomposition as decomp
 from numpy.random import SeedSequence
 from sigProfilerPlotting import sigProfilerPlotting as sigPlot
 
+DEFAULT_COSMIC_VERSION = 3.6
+SUPPORTED_COSMIC_VERSIONS = (1, 2, 3, 3.1, 3.2, 3.3, 3.4, 3.5, 3.6)
+
 MUTTYPE = "MutationType"
 
 
@@ -240,7 +243,7 @@ def sigProfilerExtractor(
     input_data,
     reference_genome="GRCh37",
     opportunity_genome="GRCh37",
-    cosmic_version=3.5,
+    cosmic_version=DEFAULT_COSMIC_VERSION,
     context_type="default",
     exome=False,
     minimum_signatures=1,
@@ -355,6 +358,8 @@ def sigProfilerExtractor(
 
 
     DECOMPOSITION:-
+
+    cosmic_version: Float, optional. Defines the version of the COSMIC reference signatures. Default is 3.6.
 
     nnls_add_penalty: Float, optional. Takes any positive float. Default is 0.05. Defines the strong (add) thresh-hold cutoff to be assigned signatures to a sample.
 
