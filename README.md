@@ -88,7 +88,7 @@ help(sig.importdata)
 Extracts mutational signatures from an array of samples.
 
 ```python 
-sigProfilerExtractor(input_type, out_put, input_data, reference_genome="GRCh37", opportunity_genome = "GRCh37", context_type = "default", exome = False, 
+sigProfilerExtractor(input_type, out_put, input_data, reference_genome="GRCh37", opportunity_genome = "GRCh37", cosmic_version=3.6, context_type = "default", exome = False,
                          minimum_signatures=1, maximum_signatures=10, nmf_replicates=100, resample = True, batch_size=1, cpu=-1, gpu=False, 
                          nmf_init="random", precision= "single", matrix_normalization= "gmm", seeds= "random", 
                          min_nmf_iterations= 10000, max_nmf_iterations=1000000, nmf_test_conv= 10000, nmf_tolerance= 1e-15, get_all_signature_matrices= False)
@@ -129,7 +129,7 @@ sigProfilerExtractor(input_type, out_put, input_data, reference_genome="GRCh37",
 |  | **combined_stability** | Float | The cutoff thresh-hold of the combined stability (sum of average and minimum stability) (default: `1.0`). Solutions with combined stabilities below this thresh-hold will not be considered. |
 |  | **allow_stability_drop** | Boolean | Defines if solutions with a drop in stability with respect to the highest stable number of signatures will be considered (default: `False`). |
 | **Decomposition** |  |  |  | 
-|  | **cosmic_version** | Float | Defines the version of the COSMIC reference signatures (default: `3.5`). Takes a positive float among `1`, `2`, `3`, `3.1`, `3.2`, `3.3`, `3.4`, and `3.5`.|
+|  | **cosmic_version** | Float | Defines the version of the COSMIC reference signatures (default: `3.6`). Takes a positive float among `1`, `2`, `3`, `3.1`, `3.2`, `3.3`, `3.4`, `3.5`, and `3.6`.|
 |  | **make_decomposition_plots** | Boolean | Generate de novo to COSMIC signature decomposition plots as part of the results (default: `True`). Set to `False` to skip generating these plots. |
 |  | **collapse_to_SBS96** | Boolean | If `True`, SBS288 and SBS1536 de novo signatures will be mapped to SBS96 reference signatures (default: `True`). If `False`, those will be mapped to reference signatures of the same context.
 | **Others** |  |  |  | 

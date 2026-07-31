@@ -7,6 +7,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Changed
+- Updated the default COSMIC reference signature version from 3.5 to 3.6.
+- Updated the minimum SigProfilerAssignment version to 1.1.5 for COSMIC v3.6 support.
+
 ## [1.2.7] - 2026-01-22
 
 ### Fixed
