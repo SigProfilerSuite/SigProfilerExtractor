@@ -11,6 +11,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Updated the default COSMIC reference signature version from 3.5 to 3.6.
 - Updated the minimum SigProfilerAssignment version to 1.1.5 for COSMIC v3.6 support.
 
+### Fixed
+- Added a lower bound (1e-16) to W, H and W @ H in the KL multiplicative updates, on CPU and GPU. A multiplicative update cannot move an entry away from exactly zero, so zeros from the NNDSVD initialization (about half of W and H) or from underflow stayed zero for the whole run. The fit could then stall and pass the convergence test early at a worse solution; with `nmf_init="nndsvd"` this could happen at the first allowed convergence check. Results and run times can change, including with the default random initialization.
+- Fixed the KL loss returning NaN when the matrix passed to NMF contains a zero (`0 * log 0`). The extraction pipeline raises every value to at least 1e-4 before NMF, so this affected only direct use of `nmf_cpu` and `nmf_gpu`.
+- If a cell of W @ H reached zero, the update produced inf or NaN that spread to all of W and H with no error. An NMF replicate whose W or H contains NaN or inf now raises `FloatingPointError` instead of entering clustering.
+
 ## [1.2.7] - 2026-01-22
 
 ### Fixed

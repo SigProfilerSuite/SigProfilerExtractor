@@ -708,6 +708,11 @@ def decipher_signatures(
     for j in range(len(results)):
         W = results[j][0]
         H = results[j][1]
+        if not (np.isfinite(W).all() and np.isfinite(H).all()):
+            raise FloatingPointError(
+                "NMF replicate {} of {} at rank {} returned non-finite values "
+                "(NaN or inf) in W or H.".format(j + 1, len(results), totalProcesses)
+            )
         converge_information[j, :] = results[j][2][:]
         finalgenomeErrors[:, :, j] = genomes - np.dot(W, H)
         finalgenomesReconstructed[:, :, j] = np.dot(W, H)

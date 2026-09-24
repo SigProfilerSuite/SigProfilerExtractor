@@ -10,6 +10,15 @@ import torch
 import torch.nn
 from torch import nn
 
+# Lower bound for W, H and W @ H in the KL multiplicative updates. A multiplicative
+# update cannot move an entry away from exactly zero, so zeros from the NNDSVD
+# initialization or from underflow stay locked for the whole run; the fit can then
+# stall and pass the convergence test early at a worse solution. If a cell of W @ H
+# reaches zero, V / (W @ H) gives inf (NaN where V is also zero), which the next
+# matrix product spreads to every entry of W and H. The original CPU engine (nimfa)
+# applied an equivalent floor after every iteration.
+EPSILON = 1e-16
+
 
 class NMF:
     def __init__(
@@ -169,10 +178,13 @@ class NMF:
     @property
     def _kl_loss(self):
         # calculate kl_loss in double precision for better convergence criteria
+        # xlogy gives 0 where V == 0, where V * log(V / WH) would give NaN. pnmf()
+        # raises V to at least 1e-4, so this matters only when NMF is called directly.
+        reconstruction = self.reconstruction.clamp(min=EPSILON)
         return (
-            (self._V * (self._V / self.reconstruction).log()).sum(dtype=torch.float64)
+            torch.xlogy(self._V, self._V / reconstruction).sum(dtype=torch.float64)
             - self._V.sum(dtype=torch.float64)
-            + self.reconstruction.sum(dtype=torch.float64)
+            + reconstruction.sum(dtype=torch.float64)
         )
 
     @property
@@ -234,15 +246,17 @@ class NMF:
                 )
                 for self._iter in range(self.max_iterations):
                     ht = self.H.transpose(1, 2)
-                    numerator = (self._V / (self.W @ self.H)) @ ht
+                    numerator = (self._V / (self.W @ self.H).clamp(min=EPSILON)) @ ht
 
-                    denomenator = ones @ ht
+                    denomenator = (ones @ ht).clamp(min=EPSILON)
                     self._W *= numerator / denomenator
+                    self._W.clamp_(min=EPSILON)
 
                     wt = self.W.transpose(1, 2)
-                    numerator = wt @ (self._V / (self.W @ self.H))
-                    denomenator = wt @ ones
+                    numerator = wt @ (self._V / (self.W @ self.H).clamp(min=EPSILON))
+                    denomenator = (wt @ ones).clamp(min=EPSILON)
                     self._H *= numerator / denomenator
+                    self._H.clamp_(min=EPSILON)
                     if stop_iterations()[0]:
                         self._conv = stop_iterations()[1]
                         break
