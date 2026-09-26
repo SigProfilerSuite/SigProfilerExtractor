@@ -722,10 +722,6 @@ def decipher_signatures(
     Hall = np.zeros((totalProcesses * totalIterations, totalGenomes))
     converge_information = np.zeros((totalIterations, 7))
 
-    finalgenomeErrors = np.zeros((totalMutationTypes, totalGenomes, totalIterations))
-    finalgenomesReconstructed = np.zeros(
-        (totalMutationTypes, totalGenomes, totalIterations)
-    )
 
     processCount = 0
     for j in range(len(results)):
@@ -737,8 +733,6 @@ def decipher_signatures(
                 "(NaN or inf) in W or H.".format(j + 1, len(results), totalProcesses)
             )
         converge_information[j, :] = results[j][2][:]
-        finalgenomeErrors[:, :, j] = genomes - np.dot(W, H)
-        finalgenomesReconstructed[:, :, j] = np.dot(W, H)
         Wall[:, processCount : (processCount + totalProcesses)] = W
         Hall[processCount : (processCount + totalProcesses), :] = H
         processCount = processCount + totalProcesses
@@ -773,8 +767,6 @@ def decipher_signatures(
         exposureSTE,
         avgSilhouetteCoefficients,
         np.round(clusterSilhouetteCoefficients, 3),
-        finalgenomeErrors,
-        finalgenomesReconstructed,
         Wall,
         Hall,
         converge_information,
@@ -1568,7 +1560,7 @@ def export_information(
     )
 
     # export convergence information
-    converge_information = loopResults[13]
+    converge_information = loopResults[11]
     converge_information = pd.DataFrame(np.around(converge_information, decimals=3))
     conv_index = list(range(1, len(converge_information) + 1))
     colmetrices = [
