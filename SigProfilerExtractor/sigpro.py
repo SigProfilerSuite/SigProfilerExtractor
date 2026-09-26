@@ -267,6 +267,25 @@ def check_input_samples(data):
     return data, empty_columns, zero_samples
 
 
+def move_previous_results(directory):
+    """
+    If directory exists and is not empty, move it to
+    <directory>_previous_<timestamp> so that files from an earlier run cannot
+    be mistaken for results of this run. Nothing is deleted. Returns the new
+    path, or None if nothing was moved.
+    """
+    if not (os.path.isdir(directory) and os.listdir(directory)):
+        return None
+    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    target = "{}_previous_{}".format(directory, stamp)
+    suffix = 1
+    while os.path.exists(target):
+        suffix += 1
+        target = "{}_previous_{}_{}".format(directory, stamp, suffix)
+    shutil.move(directory, target)
+    return target
+
+
 def read_seed_file(path):
     """
     Read a tab-separated seeds file with a "Seed" column. A single root seed
@@ -858,6 +877,14 @@ def sigProfilerExtractor(
         genomes = np.array(genomes)
         information = []
         layer_directory = output
+        previous = move_previous_results(layer_directory)
+        if previous is not None:
+            message = "Existing results in {} were moved to {}".format(
+                layer_directory, previous
+            )
+            print(message)
+            with open(out_put + "/JOB_METADATA.txt", "a") as sysdata:
+                sysdata.write("\n" + message + "\n")
         try:
             if not os.path.exists(layer_directory):
                 os.makedirs(layer_directory)
