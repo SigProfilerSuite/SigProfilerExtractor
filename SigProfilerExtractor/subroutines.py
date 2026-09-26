@@ -198,6 +198,30 @@ def get_normalization_cutoff(data, manual_cutoff=9600, random_state=None):
     return cutoff
 
 
+NORMALIZATION_METHODS = ("gmm", "100X", "log2", "none")
+
+
+def check_matrix_normalization(norm):
+    """
+    matrix_normalization must be one of NORMALIZATION_METHODS or a positive
+    whole number, which is used as a manual cutoff (samples with more
+    mutations are scaled down to it). Raise ValueError for anything else.
+    """
+    if norm in NORMALIZATION_METHODS:
+        return
+    try:
+        cutoff = int(norm)
+    except (TypeError, ValueError):
+        cutoff = None
+    if cutoff is None or cutoff <= 0 or str(cutoff) != str(norm).strip():
+        raise ValueError(
+            "matrix_normalization must be one of {} or a positive whole number "
+            "used as a manual cutoff (for example 5000), got {!r}.".format(
+                ", ".join(NORMALIZATION_METHODS), norm
+            )
+        )
+
+
 def normalize_samples(
     bootstrapGenomes, totalMutations, norm="100X", normalization_cutoff=10000000
 ):
@@ -232,19 +256,17 @@ def normalize_samples(
     elif norm == "none":
         pass
     else:
-        try:
-            bootstrapGenomes = np.array(bootstrapGenomes)
-            rows = bootstrapGenomes.shape[0]
-            indices = np.where(totalMutations > int(norm))[0]
-            norm_genome = (
-                np.array(bootstrapGenomes)[:, list(indices)]
-                / np.array(totalMutations)[list(indices)][:, np.newaxis].T
-                * (int(norm))
-            )
-            bootstrapGenomes[:, list(indices)] = norm_genome
-            bootstrapGenomes = pd.DataFrame(bootstrapGenomes)
-        except:
-            pass
+        check_matrix_normalization(norm)
+        cutoff = int(norm)
+        bootstrapGenomes = np.array(bootstrapGenomes)
+        indices = np.where(totalMutations > cutoff)[0]
+        norm_genome = (
+            np.array(bootstrapGenomes)[:, list(indices)]
+            / np.array(totalMutations)[list(indices)][:, np.newaxis].T
+            * cutoff
+        )
+        bootstrapGenomes[:, list(indices)] = norm_genome
+        bootstrapGenomes = pd.DataFrame(bootstrapGenomes)
     return bootstrapGenomes
 
 

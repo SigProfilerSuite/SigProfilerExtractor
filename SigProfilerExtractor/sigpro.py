@@ -340,7 +340,7 @@ def sigProfilerExtractor(
 
     NMF RUNS:-
 
-    matrix_normalization: A string. Method of normalizing the genome matrix before it is analyzed by NMF. Default is "log2". Other options are "gmm", "100X" or "no_normalization".
+    matrix_normalization: A string or a positive integer. Method of normalizing the genome matrix before it is analyzed by NMF. Default is "gmm". Other options are "100X", "log2", "none", or a positive integer used as a manual cutoff (for example 5000).
 
     nmf_init: A String. The initialization algorithm for W and H matrix of NMF. Options are 'random', 'nndsvd', 'nndsvda', 'nndsvdar' and 'nndsvd_min'
               Default is 'nndsvd_min'.
@@ -538,6 +538,8 @@ def sigProfilerExtractor(
         "allow_stability_drop": allow_stability_drop,
         "get_all_signature_matrices": get_all_signature_matrices,
     }
+
+    sub.check_matrix_normalization(matrix_normalization)
 
     ################################ take the inputs from the general optional arguments ####################################
     startProcess = minimum_signatures

@@ -111,7 +111,7 @@ sigProfilerExtractor(input_type, out_put, input_data, reference_genome="GRCh37",
 |  | **resample** | Boolean | If `True`, add poisson noise to samples by resampling (default: `True`). |
 |  | **seeds** | String | Ensures reproducible NMF replicate resamples. Provide the path to the `Seeds.txt` file (found in the results folder from a previous analysis) to reproduce results (default: `"random"`). |
 | **NMF Engines** |  |  |  | 
-|  | **matrix_normalization** | String | Method of normalizing the genome matrix before it is analyzed by NMF (default: `"gmm"`). Options are, `"log2"`, `"custom"` or `"none"`. |
+|  | **matrix_normalization** | String | Method of normalizing the genome matrix before it is analyzed by NMF (default: `"gmm"`). Options are `"100X"`, `"log2"`, `"none"`, or a positive integer used as a manual cutoff (for example `5000`). |
 |  | **nmf_init** | String | The initialization algorithm for W and H matrix of NMF (default: `"random"`). Options are `"random"`, `"nndsvd"`, `"nndsvda"`, `"nndsvdar"` and `"nndsvd_min"`. |
 |  | **precision** | String | Values should be single or double (default: `"single"`). |
 |  | **min_nmf_iterations** | Integer | Value defines the minimum number of iterations to be completed before NMF converges (default: `10000`). |
