@@ -309,10 +309,19 @@ def denormalize_samples(genomes, original_totals, normalization_value=30000):
     return results
 
 
+def genomes_tensor(genomes, precision):
+    """
+    Convert the input matrix to a tensor of the requested precision in one
+    step, so that "double" is not rounded through float32 first.
+    """
+    dtype = torch.float64 if precision == "double" else torch.float32
+    return torch.as_tensor(np.asarray(genomes), dtype=dtype)
+
+
 def nnmf_cpu(
     genomes, nfactors, init="nndsvd", execution_parameters=None, generator=None
 ):
-    genomes = torch.from_numpy(genomes).float()
+    genomes = genomes_tensor(genomes, execution_parameters["precision"])
     min_iterations = execution_parameters["min_NMF_iterations"]
     max_iterations = execution_parameters["max_NMF_iterations"]
     tolerance = execution_parameters["NMF_tolerance"]
@@ -360,7 +369,7 @@ def nnmf_gpu(
     p = current_process()
     identity = p._identity[0]
     gpu_id = identity % torch.cuda.device_count()
-    genomes = torch.from_numpy(genomes).float().cuda(gpu_id)
+    genomes = genomes_tensor(genomes, execution_parameters["precision"]).cuda(gpu_id)
     min_iterations = execution_parameters["min_NMF_iterations"]
     max_iterations = execution_parameters["max_NMF_iterations"]
     tolerance = execution_parameters["NMF_tolerance"]
