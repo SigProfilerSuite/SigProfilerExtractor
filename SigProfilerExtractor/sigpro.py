@@ -238,6 +238,35 @@ def record_parameters(sysdata, execution_parameters, start_time):
     sysdata.write("[{}] Analysis started: \n".format(str(start_time).split(".")[0]))
 
 
+def check_input_samples(data):
+    """
+    Check the sample columns of an input matrix (first column: mutation types).
+    Columns that are entirely empty (for example from a trailing tab) and samples
+    with no mutations are removed and returned so they can be reported. A sample
+    with only some values missing raises ValueError naming the sample and the
+    mutation types, rather than being dropped silently.
+    """
+    samples = data.iloc[:, 1:]
+    missing = samples.isna()
+    empty_columns = [str(c) for c in samples.columns[missing.all(axis=0)]]
+    partial = samples.columns[missing.any(axis=0) & ~missing.all(axis=0)]
+    if len(partial) > 0:
+        details = []
+        for sample in partial[:5]:
+            rows = data.iloc[:, 0][missing[sample].to_numpy()].astype(str).tolist()
+            details.append("{} ({})".format(sample, ", ".join(rows[:5])))
+        raise ValueError(
+            "The input matrix has missing values in {} sample(s): {}".format(
+                len(partial), "; ".join(details)
+            )
+        )
+    data = data.drop(columns=samples.columns[missing.all(axis=0)])
+    samples = data.iloc[:, 1:]
+    zero_samples = [str(c) for c in samples.columns[(samples == 0).all(axis=0)]]
+    data = data.drop(columns=samples.columns[(samples == 0).all(axis=0)])
+    return data, empty_columns, zero_samples
+
+
 def read_seed_file(path):
     """
     Read a tab-separated seeds file with a "Seed" column. A single root seed
@@ -584,8 +613,15 @@ def sigProfilerExtractor(
         else:
             data = pd.read_csv(text_file, sep="\t").iloc[:, :]
 
-        data = data.dropna(axis=1, inplace=False)
-        data = data.loc[:, (data != 0).any(axis=0)]
+        data, empty_columns, zero_samples = check_input_samples(data)
+        for label, dropped in (
+            ("Empty columns removed from the input", empty_columns),
+            ("Samples with no mutations removed from the input", zero_samples),
+        ):
+            if dropped:
+                message = "{} ({}): {}".format(label, len(dropped), ", ".join(dropped))
+                print(message)
+                sysdata.write(message + "\n")
         # printing the number of mutations
         mutation_number = str(data.shape[0])
         # Re-indexing the input matrix file by using process_input function from SigProfilePlotting
