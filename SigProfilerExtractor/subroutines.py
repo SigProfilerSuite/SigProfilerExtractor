@@ -523,6 +523,21 @@ def pnmf(
         return W, H, kl
 
 
+def replicate_batches(iterations, batch_size, gpu):
+    """
+    Number of replicates run by each parallel task. The GPU path runs a batch of
+    replicates per task; the CPU path runs exactly one replicate per task, so
+    batch_size must not reduce the number of CPU replicates.
+    """
+    iterations = int(iterations)
+    if not gpu:
+        return [1] * iterations
+    batches = [batch_size] * (iterations // batch_size)
+    if iterations % batch_size != 0:
+        batches.append(iterations % batch_size)
+    return batches
+
+
 def parallel_runs(
     execution_parameters,
     genomes=1,
@@ -550,9 +565,6 @@ def parallel_runs(
     else:
         pool = multiprocessing.Pool(processes=n_cpu)
 
-    num_full_batches = iterations // batch_size
-    last_batch_size = iterations % batch_size
-
     # generators used for noise and matrix initialization
     poisson_generator = replicate_generators[0]
     rep_generator = replicate_generators[1]
@@ -564,9 +576,7 @@ def parallel_runs(
     for i, j in zip(poisson_rand_list, sub_rand_generators):
         generator_pair_list.append([i, j])
 
-    batches = [batch_size for _ in range(num_full_batches)]
-    if last_batch_size != 0:
-        batches.append(last_batch_size)
+    batches = replicate_batches(iterations, batch_size, gpu)
 
     batch_generator_pair = []
 
@@ -608,6 +618,13 @@ def parallel_runs(
         pool.close()
         pool.join()
         flat_list = result_list
+
+    if len(flat_list) != iterations:
+        raise RuntimeError(
+            "NMF replicate count mismatch: {} requested, {} returned".format(
+                iterations, len(flat_list)
+            )
+        )
     return flat_list
 
 
