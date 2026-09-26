@@ -56,6 +56,7 @@ from numpy.random import SeedSequence
 from sigProfilerPlotting import sigProfilerPlotting as sigPlot
 
 DEFAULT_COSMIC_VERSION = 3.6
+DEFAULT_MAXIMUM_SIGNATURES = 25
 SUPPORTED_COSMIC_VERSIONS = (1, 2, 3, 3.1, 3.2, 3.3, 3.4, 3.5, 3.6)
 
 MUTTYPE = "MutationType"
@@ -267,7 +268,7 @@ def sigProfilerExtractor(
     context_type="default",
     exome=False,
     minimum_signatures=1,
-    maximum_signatures=25,
+    maximum_signatures=DEFAULT_MAXIMUM_SIGNATURES,
     nmf_replicates=100,
     resample=True,
     batch_size=1,
@@ -328,7 +329,7 @@ def sigProfilerExtractor(
 
     minimum_signature: A positive integer, optional. The minimum number of signatures to be extracted. The default value is 1
 
-    maximum_signatures: A positive integer, optional. The maximum number of signatures to be extracted. The default value is 10
+    maximum_signatures: A positive integer, optional. The maximum number of signatures to be extracted. The default value is 25
 
     nmf_replicates: A positive integer, optional. The number of iteration to be performed to extract each number signature. The default value is 100
 
