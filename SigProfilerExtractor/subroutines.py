@@ -956,18 +956,7 @@ def reclustering(
 
     # Concatenate all DataFrames at once
     clusters = pd.concat(clusters_list, ignore_index=True)
-    try:
-        if dist == "cosine":
-            SilhouetteCoefficients = metrics.silhouette_samples(
-                clusters, labels, metric="cosine"
-            )
-        if dist == "correlation":
-            SilhouetteCoefficients = metrics.silhouette_samples(
-                clusters, labels, metric="correlation"
-            )
-
-    except:
-        SilhouetteCoefficients = np.ones((len(labels), 1))
+    SilhouetteCoefficients = silhouette_stability(clusters, labels, dist)
 
     avgSilhouetteCoefficients = np.mean(SilhouetteCoefficients)
 
@@ -1069,6 +1058,29 @@ def parallel_clustering(
 
 
 # To select the best clustering converge of the cluster_converge_innerloop
+def silhouette_stability(clusters, labels, dist):
+    """
+    Silhouette coefficient of every replicate signature. With a single cluster
+    (rank 1) the silhouette is undefined and every signature is given 1.0 by
+    convention. Every other failure is raised instead of being reported as
+    perfect stability.
+    """
+    n_clusters = len(set(labels))
+    if n_clusters == 1:
+        return np.ones(len(labels))
+    if n_clusters >= len(labels):
+        raise ValueError(
+            "Signature stability needs at least 2 NMF replicates per signature "
+            "({} signatures, {} replicate signatures).".format(n_clusters, len(labels))
+        )
+    try:
+        return metrics.silhouette_samples(clusters, labels, metric=dist)
+    except Exception as err:
+        raise RuntimeError(
+            "Silhouette calculation failed for rank {}: {}".format(n_clusters, err)
+        ) from err
+
+
 def cluster_converge_outerloop(
     Wall, Hall, totalprocess, dist="cosine", gpu=False, cluster_rand_seq=None, n_cpu=-1
 ):
