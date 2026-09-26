@@ -41,7 +41,6 @@ from scipy.optimize import nnls
 
 import warnings as _warnings
 
-_warnings.filterwarnings("ignore")
 from numpy.random import Generator, PCG64DXSM, SeedSequence
 
 
@@ -51,7 +50,10 @@ try:
 except ImportError:
     _warnings.warn("Cannot pytorch - GPU unavailable")
 
-multiprocessing.set_start_method("spawn", force=True)
+# Pools created by SigProfilerExtractor use the "spawn" start method. Use a
+# context instead of multiprocessing.set_start_method(), which would change the
+# start method of the whole host program on import.
+SPAWN = multiprocessing.get_context("spawn")
 ################################################################## Vivid Functions #############################
 
 ############################################################## FUNCTION ONE ##########################################
@@ -598,9 +600,9 @@ def parallel_runs(
             + " is in progress\n===================================>"
         )
     if n_cpu == -1:
-        pool = multiprocessing.Pool()
+        pool = SPAWN.Pool()
     else:
-        pool = multiprocessing.Pool(processes=n_cpu)
+        pool = SPAWN.Pool(processes=n_cpu)
 
     # generators used for noise and matrix initialization
     poisson_generator = replicate_generators[0]
@@ -1060,9 +1062,9 @@ def parallel_clustering(
     cluster_rand_seq=None,
 ):
     if n_cpu == -1:
-        pool = multiprocessing.Pool()
+        pool = SPAWN.Pool()
     else:
-        pool = multiprocessing.Pool(processes=n_cpu)
+        pool = SPAWN.Pool(processes=n_cpu)
 
     # create random generators for each subprocess
     sub_rand_generator = cluster_rand_seq.spawn(iterations)

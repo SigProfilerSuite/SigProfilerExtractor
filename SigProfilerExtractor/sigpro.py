@@ -1025,9 +1025,9 @@ def sigProfilerExtractor(
             if avgSilhouetteCoefficients > -1.0:
                 stic = time.time()
                 if cpu > 0:
-                    pool = mp.Pool(processes=cpu)
+                    pool = sub.SPAWN.Pool(processes=cpu)
                 else:
-                    pool = mp.Pool()
+                    pool = sub.SPAWN.Pool()
                 results = [
                     pool.apply_async(
                         spasub.fit_signatures_pool,
