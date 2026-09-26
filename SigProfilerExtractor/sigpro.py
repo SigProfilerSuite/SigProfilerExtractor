@@ -760,6 +760,8 @@ def sigProfilerExtractor(
     sysdata.close()
     ###########################################################################################################################################################################################
 
+    analyzed_contexts = []
+    skipped_contexts = []
     for m in mtypes:
         # we need to rename the m because users input could be SBS96, SBS1536, DBS78, ID83 etc
         if m.startswith("SBS"):
@@ -817,6 +819,7 @@ def sigProfilerExtractor(
                 )
                 print("Context {} is not available in the current vcf files".format(m))
                 sysdata.close()
+                skipped_contexts.append("{} (not available)".format(m))
                 continue
             # check if the genome is a nonzero matrix
             if genomes.shape == (0, 0):
@@ -828,6 +831,7 @@ def sigProfilerExtractor(
                 )
                 print("Sample is not a nozero matrix for the mutation context " + m)
                 sysdata.close()
+                skipped_contexts.append("{} (empty matrix)".format(m))
                 continue
 
             genomes = genomes.loc[:, (genomes != 0).any(axis=0)]
@@ -835,6 +839,8 @@ def sigProfilerExtractor(
             index = genomes.index.values
             colnames = genomes.columns
             allcolnames = colnames.copy()  # save the allcolnames for the final results
+
+        analyzed_contexts.append(mutation_type)
 
         # limit the requested rank range to the number of samples of this context;
         # recompute from the requested values so that one context cannot narrow
@@ -1203,6 +1209,17 @@ def sigProfilerExtractor(
                 initial_remove_penalty=initial_remove_penalty,
                 collapse_to_SBS96=collapse_to_SBS96,
             )
+
+    if skipped_contexts:
+        message = "Mutation contexts skipped: {}".format(", ".join(skipped_contexts))
+        print(message)
+        with open(out_put + "/JOB_METADATA.txt", "a") as sysdata:
+            sysdata.write("\n" + message + "\n")
+    if not analyzed_contexts:
+        message = "No mutation context could be analyzed; no signatures were extracted."
+        with open(out_put + "/JOB_METADATA.txt", "a") as sysdata:
+            sysdata.write("\n-------Job Status------- \n" + message + "\n")
+        raise RuntimeError(message)
 
     sysdata = open(out_put + "/JOB_METADATA.txt", "a")
     end_time = datetime.datetime.now()
