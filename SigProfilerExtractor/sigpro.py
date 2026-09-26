@@ -523,8 +523,6 @@ def sigProfilerExtractor(
     endProcess = maximum_signatures
     mtype = context_type
     wall = get_all_signature_matrices
-    add_penalty = nnls_add_penalty
-    remove_penalty = nnls_remove_penalty
     genome_build = opportunity_genome
     refgen = reference_genome
 
@@ -1137,6 +1135,10 @@ def sigProfilerExtractor(
                 make_metadata=False,
                 volume=volume,
                 cpu=assignment_cpu,
+                nnls_add_penalty=nnls_add_penalty,
+                nnls_remove_penalty=nnls_remove_penalty,
+                initial_remove_penalty=initial_remove_penalty,
+                collapse_to_SBS96=collapse_to_SBS96,
             )
 
     sysdata = open(out_put + "/JOB_METADATA.txt", "a")
