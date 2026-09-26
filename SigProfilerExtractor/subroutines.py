@@ -320,6 +320,21 @@ def genomes_tensor(genomes, precision):
     return torch.as_tensor(np.asarray(genomes), dtype=dtype)
 
 
+def replicate_diagnostics(genomes, W, H, convergence):
+    """
+    Fit diagnostics of one NMF replicate: the mean similarity metrics between
+    the matrix that NMF fitted (the bootstrapped, normalized genomes) and W @ H
+    as returned by NMF, followed by the number of iterations. Used by both the
+    CPU and the GPU path, so that their values describe the same state.
+    """
+    est_genome = np.array(np.dot(W, H))
+    similarities = calculate_similarities(
+        np.array(genomes), est_genome, sample_names=False
+    )[0].iloc[:, 2:]
+    similarities = np.array(np.mean(similarities, axis=0)).T
+    return np.append(similarities, convergence)
+
+
 def nnmf_cpu(
     genomes, nfactors, init="nndsvd", execution_parameters=None, generator=None
 ):
@@ -353,15 +368,7 @@ def nnmf_cpu(
 
     W = Ws[0]
     H = Hs[0]
-    # calculate L1, L2 and KL for the solution
-
-    est_genome = np.array(np.dot(W, H))
-    genomes = np.array(genomes)
-    similarities = calculate_similarities(genomes, est_genome, sample_names=False)[
-        0
-    ].iloc[:, 2:]
-    similarities = np.array(np.mean(similarities, axis=0)).T
-    similarities = np.append(similarities, convergence)
+    similarities = replicate_diagnostics(genomes, W, H, convergence)
     return W, H, similarities
 
 
@@ -506,14 +513,14 @@ def pnmf(
             generator=rand_rng,
         )
         for i in range(len(W)):
+            diagnostics = replicate_diagnostics(g[i], W[i], H[i], Conv[i])
             _W = np.array(W[i])
             _H = np.array(H[i])
             total = _W.sum(axis=0, keepdims=True)#[np.newaxis]
             _W = _W / total
             _H = _H * total.T
             _H = denormalize_samples(_H, totalMutations)
-            _conv = Conv[i]
-            results.append((_W, _H, _conv))
+            results.append((_W, _H, diagnostics))
             print("process " + str(totalProcesses) + " continues please wait... ")
             print("execution time: {} seconds \n".format(round(time.time() - tic), 2))
         return results
@@ -708,38 +715,13 @@ def decipher_signatures(
     ##############################################################################################################################################################################
     ############################################################# The parallel processing takes place here #######################################################################
     ##############################################################################################################################################################################
-    if gpu == True:
-        results = []
-        flat_list = parallel_runs(
-            execution_parameters,
-            genomes=genomes,
-            totalProcesses=totalProcesses,
-            verbose=False,
-            replicate_generators=replicate_generators,
-        )
-
-        for items in range(len(flat_list)):
-            W = flat_list[items][0]
-            H = flat_list[items][1]
-            conv = flat_list[items][2]
-            # calculate L1, L2 and KL for the solution
-            est_genome = np.array(np.dot(W, H))
-
-            similarities = calculate_similarities(
-                genomes, est_genome, sample_names=False
-            )[0].iloc[:, 2:]
-            similarities = np.array(np.mean(similarities, axis=0)).T
-            similarities = np.append(similarities, conv)
-
-            results.append([W, H, similarities])
-    else:
-        results = parallel_runs(
-            execution_parameters,
-            genomes=genomes,
-            totalProcesses=totalProcesses,
-            verbose=False,
-            replicate_generators=replicate_generators,
-        )
+    results = parallel_runs(
+        execution_parameters,
+        genomes=genomes,
+        totalProcesses=totalProcesses,
+        verbose=False,
+        replicate_generators=replicate_generators,
+    )
     toc = time.time()
     print(
         "Time taken to collect {} iterations for {} signatures is {} seconds".format(
