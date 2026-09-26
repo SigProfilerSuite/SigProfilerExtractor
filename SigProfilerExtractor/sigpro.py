@@ -782,9 +782,11 @@ def sigProfilerExtractor(
             colnames = genomes.columns
             allcolnames = colnames.copy()  # save the allcolnames for the final results
 
-        # check if start and end processes are bigger than the number of samples
-        startProcess = min(startProcess, genomes.shape[1])
-        endProcess = min(endProcess, genomes.shape[1])
+        # limit the requested rank range to the number of samples of this context;
+        # recompute from the requested values so that one context cannot narrow
+        # the range of the contexts that follow it
+        startProcess = min(minimum_signatures, genomes.shape[1])
+        endProcess = min(maximum_signatures, genomes.shape[1])
 
         # in the plotting funciton "ID" is used as "INDEL"
         if m == "ID":
@@ -835,6 +837,14 @@ def sigProfilerExtractor(
                 mutation_type,
                 genomes.shape[0],
                 genomes.shape[1],
+            )
+        )
+        sysdata.write(
+            "\n[{}] Signature ranks evaluated for {}: {} to {}\n".format(
+                str(datetime.datetime.now()).split(".")[0],
+                mutation_type,
+                startProcess,
+                endProcess,
             )
         )
         if execution_parameters["matrix_normalization"] == "gmm":
