@@ -237,6 +237,26 @@ def record_parameters(sysdata, execution_parameters, start_time):
     sysdata.write("[{}] Analysis started: \n".format(str(start_time).split(".")[0]))
 
 
+def read_seed_file(path):
+    """
+    Read a tab-separated seeds file with a "Seed" column. A single root seed
+    drives every random generator of the run, so the file must hold exactly one.
+    Returns the file as a DataFrame and the seed as an int.
+    """
+    try:
+        seeds = pd.read_csv(path, sep="\t", index_col=0)
+        seed_values = seeds["Seed"].to_numpy()
+    except Exception as err:
+        raise ValueError("Please set valid seeds") from err
+    if len(seed_values) != 1:
+        raise ValueError(
+            "The seeds file must contain exactly one seed, found {}.".format(
+                len(seed_values)
+            )
+        )
+    return seeds, int(seed_values[0])
+
+
 def sigProfilerExtractor(
     input_type,
     output,
@@ -315,7 +335,7 @@ def sigProfilerExtractor(
     resample: Boolean, optional. Default is True. If True, add poisson noise to samples by resampling.
 
     seeds: Boolean. Default is "random". If random, then the seeds for resampling will be random for different analysis.
-                  If not random, then seeds will be obtained from a given path of a .txt file that contains a list of seed.
+                  If not random, then the seed will be obtained from a given path of a tab-separated .txt file with a "Seed" column holding exactly one seed.
 
     NMF RUNS:-
 
@@ -536,18 +556,13 @@ def sigProfilerExtractor(
     if seeds == "random":
         execution_parameters["seeds"] = seeds
         tmp_seed = SeedSequence().entropy
-        seed = np.array(tmp_seed)
+        seed = int(tmp_seed)
         seeds = pd.DataFrame([tmp_seed], columns=["Seed"])
         seeds.to_csv(out_put + "/Seeds.txt", sep="\t", quoting=None)
     else:
-        try:
-            execution_parameters["seeds"] = seeds
-            seeds = pd.read_csv(seeds, sep="\t", index_col=0)
-            seeds.to_csv(out_put + "/Seeds.txt", sep="\t")
-            seed = np.array(seeds["Seed"])
-
-        except:
-            raise ValueError("Please set valid seeds")
+        execution_parameters["seeds"] = seeds
+        seeds, seed = read_seed_file(seeds)
+        seeds.to_csv(out_put + "/Seeds.txt", sep="\t")
 
     if input_type == "text" or input_type == "table" or input_type == "matrix":
         ################################### For text input files ######################################################
