@@ -816,8 +816,11 @@ def sigProfilerExtractor(
 
         # get the cutoff for normatization to handle the hypermutators
 
+        # derive the GMM random state from the root seed, so that the cutoff is
+        # reproducible from Seeds.txt
+        gmm_random_state = int(SeedSequence(int(seed)).generate_state(1)[0])
         normalization_cutoff = sub.get_normalization_cutoff(
-            genomes, manual_cutoff=100 * genomes.shape[0]
+            genomes, manual_cutoff=100 * genomes.shape[0], random_state=gmm_random_state
         )
         execution_parameters["normalization_cutoff"] = normalization_cutoff
 

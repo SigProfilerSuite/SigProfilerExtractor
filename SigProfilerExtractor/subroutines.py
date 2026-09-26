@@ -144,7 +144,11 @@ def split_list(lst, splitlenth):
 ############################################ Functions for modifications of Sample Matrices ###############
 
 
-def get_normalization_cutoff(data, manual_cutoff=9600):
+def get_normalization_cutoff(data, manual_cutoff=9600, random_state=None):
+    """
+    random_state is passed to GaussianMixture so that the cutoff can be
+    reproduced from the run's seed.
+    """
     col_sums = np.array(np.sum(data, axis=0))
 
     # continue the loop if the differece the means is larger than the 2*2*STD of the larger cluster
@@ -154,7 +158,9 @@ def get_normalization_cutoff(data, manual_cutoff=9600):
             col_sums_for_cluster = col_sums.reshape(-1, 1)
 
             # separate distributions using mixture model
-            clf = mixture.GaussianMixture(n_components=2, covariance_type="full")
+            clf = mixture.GaussianMixture(
+                n_components=2, covariance_type="full", random_state=random_state
+            )
             clf.fit(col_sums_for_cluster)
             labels = clf.predict(col_sums_for_cluster)
 
