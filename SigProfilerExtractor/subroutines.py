@@ -1378,6 +1378,15 @@ def read_csv(filename, folder=False):
 
 
 ###################################################################################### Export Results ###########################################
+def integer_activities(exposures):
+    """
+    Whole-number activities for the exported activity files. Round to the
+    nearest integer; astype(int) alone truncates towards zero, which
+    under-reports every activity (0.99 became 0).
+    """
+    return np.rint(exposures).astype(int)
+
+
 def export_information(
     loopResults,
     mutation_type,
@@ -1468,7 +1477,7 @@ def export_information(
     exposures_float = exposures_float.T
     exposures_float = exposures_float.rename_axis("Samples", axis="columns")
 
-    exposureAvg_int = pd.DataFrame(exposureAvg.astype(int))
+    exposureAvg_int = pd.DataFrame(integer_activities(exposureAvg))
     exposures = exposureAvg_int.set_index(listOfSignatures)
     exposures.columns = colnames
     exposures = exposures.T
