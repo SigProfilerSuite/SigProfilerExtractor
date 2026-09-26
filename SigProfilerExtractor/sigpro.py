@@ -286,6 +286,15 @@ def move_previous_results(directory):
     return target
 
 
+def sv_matrix_directory(input_data):
+    """
+    Folder for the SV matrices generated from a BEDPE input folder: SV_Matrices
+    next to the input folder. The path is normalized first, so "/data/sv" and
+    "/data/sv/" give the same result.
+    """
+    return os.path.join(os.path.dirname(os.path.normpath(input_data)), "SV_Matrices")
+
+
 def read_seed_file(path):
     """
     Read a tab-separated seeds file with a "Seed" column. A single root seed
@@ -742,7 +751,7 @@ def sigProfilerExtractor(
         # create a directory to write the output matrices to
         title = project
         mtypes = ["SV32"]
-        sv_outputs = os.path.join(os.path.split(input_data)[0], "SV_Matrices")
+        sv_outputs = sv_matrix_directory(input_data)
 
         # SV input processing, execution parameters
         genomes = sv.generateSVMatrix(project, project_name, sv_outputs)
