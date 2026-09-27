@@ -1,6 +1,6 @@
 import unittest
 
-from SigProfilerExtractor.subroutines import replicate_batches
+from SigProfilerExtractor.subroutines import replicate_batches, split_generators
 
 
 class ReplicateBatchesTest(unittest.TestCase):
@@ -13,6 +13,12 @@ class ReplicateBatchesTest(unittest.TestCase):
         self.assertEqual(replicate_batches(10, 3, gpu=True), [3, 3, 3, 1])
         for batch_size in (1, 2, 3, 7, 10, 12):
             self.assertEqual(sum(replicate_batches(10, batch_size, gpu=True)), 10)
+
+    def test_every_replicate_keeps_its_own_generators(self):
+        pairs = [("poisson%d" % k, "start%d" % k) for k in range(10)]
+        for gpu, batch_size in ((False, 5), (True, 1), (True, 3), (True, 10)):
+            groups = split_generators(pairs, replicate_batches(10, batch_size, gpu))
+            self.assertEqual([p for group in groups for p in group], pairs)
 
 
 if __name__ == "__main__":

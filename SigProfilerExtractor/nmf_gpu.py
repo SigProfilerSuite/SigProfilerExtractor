@@ -88,7 +88,32 @@ class NMF:
         """
         Initialise basis and coefficient matrices according to `init_method`
         """
-        if init_method == "random":
+        if init_method == "random" and isinstance(self._generator, (list, tuple)):
+            # each replicate draws its W and then its H from its own generator, in
+            # the same order as nmf_cpu, so it starts from the same point on CPU
+            # and GPU however it is batched
+            if len(self._generator) != self._V.shape[0]:
+                raise ValueError("One generator per replicate is required.")
+            W = np.stack(
+                [
+                    g.random((self._V.shape[1], self._rank), dtype=np.float64)
+                    for g in self._generator
+                ]
+            )
+            H = np.stack(
+                [
+                    g.random((self._rank, self._V.shape[2]), dtype=np.float64)
+                    for g in self._generator
+                ]
+            )
+            W = torch.from_numpy(W).cuda()
+            H = torch.from_numpy(H).cuda()
+            if self._np_dtype is np.float32:
+                W = W.float()
+                H = H.float()
+            return W, H
+
+        elif init_method == "random":
             W = torch.from_numpy(
                 self._generator.random(
                     (self._V.shape[0], self._V.shape[1], self._rank), dtype=np.float64
@@ -111,7 +136,7 @@ class NMF:
             for i in range(self._V.shape[0]):
                 vin = self._V.cpu().numpy()[i]
                 W[i, :, :], H[i, :, :] = nv.initialize(
-                    vin, self._rank, options={"flag": 0, "generator": self._generator}
+                    vin, self._rank, options={"flag": 0, "generator": self._replicate_generator(i)}
                 )
 
         elif init_method == "nndsvda":
@@ -121,7 +146,7 @@ class NMF:
             for i in range(self._V.shape[0]):
                 vin = self._V.cpu().numpy()[i]
                 W[i, :, :], H[i, :, :] = nv.initialize(
-                    vin, self._rank, options={"flag": 1, "generator": self._generator}
+                    vin, self._rank, options={"flag": 1, "generator": self._replicate_generator(i)}
                 )
 
         elif init_method == "nndsvdar":
@@ -131,7 +156,7 @@ class NMF:
             for i in range(self._V.shape[0]):
                 vin = self._V.cpu().numpy()[i]
                 W[i, :, :], H[i, :, :] = nv.initialize(
-                    vin, self._rank, options={"flag": 2, "generator": self._generator}
+                    vin, self._rank, options={"flag": 2, "generator": self._replicate_generator(i)}
                 )
         elif init_method == "nndsvd_min":
             W = np.zeros([self._V.shape[0], self._V.shape[1], self._rank])
@@ -139,7 +164,7 @@ class NMF:
             nv = Nndsvd()
             for i in range(self._V.shape[0]):
                 vin = self._V.cpu().numpy()[i]
-                w, h = nv.initialize(vin, self._rank, options={"flag": 2, "generator": self._generator})
+                w, h = nv.initialize(vin, self._rank, options={"flag": 2, "generator": self._replicate_generator(i)})
                 min_X = np.min(vin[vin > 0])
                 h[h <= min_X] = min_X
                 w[w <= min_X] = min_X
@@ -151,6 +176,12 @@ class NMF:
         W = torch.from_numpy(W).type(self._tensor_type).cuda(self._gpu_id)
         H = torch.from_numpy(H).type(self._tensor_type).cuda(self._gpu_id)
         return W, H
+
+    def _replicate_generator(self, i):
+        """Generator of replicate i: its own one, or the one shared by the batch."""
+        if isinstance(self._generator, (list, tuple)):
+            return self._generator[i]
+        return self._generator
 
     @property
     def reconstruction(self):
@@ -199,6 +230,47 @@ class NMF:
         self._prev_loss = self._kl_loss
         return False
 
+    def _replicate_kl_loss(self, i):
+        # _kl_loss of replicate i alone (the same expression, on a batch of one)
+        V = self._V[i : i + 1]
+        reconstruction = (self.W[i : i + 1] @ self.H[i : i + 1]).clamp(min=EPSILON)
+        return (
+            torch.xlogy(V, V / reconstruction).sum(dtype=torch.float64)
+            - V.sum(dtype=torch.float64)
+            + reconstruction.sum(dtype=torch.float64)
+        )
+
+    def _stop_converged_replicates(self):
+        """
+        The single-replicate stopping rule of _loss_converged, applied to every
+        replicate of the batch: every test_conv iterations, a replicate stops when
+        its relative loss change is below the tolerance and more than
+        min_iterations have run. A stopped replicate keeps its W and H, so each
+        replicate ends where it would have ended on its own.
+        """
+        if self._iter % self._test_conv != 0:
+            return
+        loss = torch.stack(
+            [self._replicate_kl_loss(i) for i in range(self._V.shape[0])]
+        )
+        if not self._iter:
+            self._loss_init = loss
+            self._prev_loss = loss
+            return
+        converged = ((self._prev_loss - loss) / self._loss_init) < self._tolerance
+        self._prev_loss = torch.where(converged, self._prev_loss, loss)
+        stop = converged & self._active & (self._iter > self.min_iterations)
+        self._replicate_conv[stop.cpu()] = self._iter
+        self._active &= ~stop
+
+    @property
+    def replicate_conv(self):
+        """Iteration at which each replicate converged (0 if it did not)."""
+        try:
+            return [int(c) for c in self._replicate_conv]
+        except AttributeError:
+            return [int(self.conv)] * self._V.shape[0]
+
     def fit(self, beta=1):
         """
         Fit the basis (W) and coefficient (H) matrices to the input matrix (V) using multiplicative updates and
@@ -244,22 +316,31 @@ class NMF:
                 ones = (
                     torch.ones(self._V.shape).type(self._tensor_type).cuda(self._gpu_id)
                 )
+                self._active = torch.ones(
+                    self._V.shape[0], dtype=torch.bool, device=self._V.device
+                )
+                self._replicate_conv = torch.zeros(self._V.shape[0], dtype=torch.long)
                 for self._iter in range(self.max_iterations):
+                    # replicates that have already converged keep their W and H
+                    active = self._active[:, None, None]
                     ht = self.H.transpose(1, 2)
                     numerator = (self._V / (self.W @ self.H).clamp(min=EPSILON)) @ ht
 
                     denomenator = (ones @ ht).clamp(min=EPSILON)
-                    self._W *= numerator / denomenator
-                    self._W.clamp_(min=EPSILON)
+                    W = (self.W * (numerator / denomenator)).clamp(min=EPSILON)
+                    self._W = torch.where(active, W, self._W)
 
                     wt = self.W.transpose(1, 2)
                     numerator = wt @ (self._V / (self.W @ self.H).clamp(min=EPSILON))
                     denomenator = (wt @ ones).clamp(min=EPSILON)
-                    self._H *= numerator / denomenator
-                    self._H.clamp_(min=EPSILON)
-                    if stop_iterations()[0]:
-                        self._conv = stop_iterations()[1]
+                    H = (self.H * (numerator / denomenator)).clamp(min=EPSILON)
+                    self._H = torch.where(active, H, self._H)
+
+                    self._stop_converged_replicates()
+                    if not self._active.any():
                         break
+                if self._V.shape[0] == 1 and self._replicate_conv[0] > 0:
+                    self._conv = int(self._replicate_conv[0])
 
             else:
                 for self._iter in range(self.max_iterations):
