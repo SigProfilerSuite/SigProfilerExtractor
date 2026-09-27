@@ -41,7 +41,6 @@ from scipy.optimize import nnls
 
 import warnings as _warnings
 
-_warnings.filterwarnings("ignore")
 from numpy.random import Generator, PCG64DXSM, SeedSequence
 
 
@@ -51,7 +50,10 @@ try:
 except ImportError:
     _warnings.warn("Cannot pytorch - GPU unavailable")
 
-multiprocessing.set_start_method("spawn", force=True)
+# Pools created by SigProfilerExtractor use the "spawn" start method. Use a
+# context instead of multiprocessing.set_start_method(), which would change the
+# start method of the whole host program on import.
+SPAWN = multiprocessing.get_context("spawn")
 ################################################################## Vivid Functions #############################
 
 ############################################################## FUNCTION ONE ##########################################
@@ -144,7 +146,11 @@ def split_list(lst, splitlenth):
 ############################################ Functions for modifications of Sample Matrices ###############
 
 
-def get_normalization_cutoff(data, manual_cutoff=9600):
+def get_normalization_cutoff(data, manual_cutoff=9600, random_state=None):
+    """
+    random_state is passed to GaussianMixture so that the cutoff can be
+    reproduced from the run's seed.
+    """
     col_sums = np.array(np.sum(data, axis=0))
 
     # continue the loop if the differece the means is larger than the 2*2*STD of the larger cluster
@@ -154,7 +160,9 @@ def get_normalization_cutoff(data, manual_cutoff=9600):
             col_sums_for_cluster = col_sums.reshape(-1, 1)
 
             # separate distributions using mixture model
-            clf = mixture.GaussianMixture(n_components=2, covariance_type="full")
+            clf = mixture.GaussianMixture(
+                n_components=2, covariance_type="full", random_state=random_state
+            )
             clf.fit(col_sums_for_cluster)
             labels = clf.predict(col_sums_for_cluster)
 
@@ -192,6 +200,30 @@ def get_normalization_cutoff(data, manual_cutoff=9600):
     return cutoff
 
 
+NORMALIZATION_METHODS = ("gmm", "100X", "log2", "none")
+
+
+def check_matrix_normalization(norm):
+    """
+    matrix_normalization must be one of NORMALIZATION_METHODS or a positive
+    whole number, which is used as a manual cutoff (samples with more
+    mutations are scaled down to it). Raise ValueError for anything else.
+    """
+    if norm in NORMALIZATION_METHODS:
+        return
+    try:
+        cutoff = int(norm)
+    except (TypeError, ValueError):
+        cutoff = None
+    if cutoff is None or cutoff <= 0 or str(cutoff) != str(norm).strip():
+        raise ValueError(
+            "matrix_normalization must be one of {} or a positive whole number "
+            "used as a manual cutoff (for example 5000), got {!r}.".format(
+                ", ".join(NORMALIZATION_METHODS), norm
+            )
+        )
+
+
 def normalize_samples(
     bootstrapGenomes, totalMutations, norm="100X", normalization_cutoff=10000000
 ):
@@ -226,19 +258,17 @@ def normalize_samples(
     elif norm == "none":
         pass
     else:
-        try:
-            bootstrapGenomes = np.array(bootstrapGenomes)
-            rows = bootstrapGenomes.shape[0]
-            indices = np.where(totalMutations > int(norm))[0]
-            norm_genome = (
-                np.array(bootstrapGenomes)[:, list(indices)]
-                / np.array(totalMutations)[list(indices)][:, np.newaxis].T
-                * (int(norm))
-            )
-            bootstrapGenomes[:, list(indices)] = norm_genome
-            bootstrapGenomes = pd.DataFrame(bootstrapGenomes)
-        except:
-            pass
+        check_matrix_normalization(norm)
+        cutoff = int(norm)
+        bootstrapGenomes = np.array(bootstrapGenomes)
+        indices = np.where(totalMutations > cutoff)[0]
+        norm_genome = (
+            np.array(bootstrapGenomes)[:, list(indices)]
+            / np.array(totalMutations)[list(indices)][:, np.newaxis].T
+            * cutoff
+        )
+        bootstrapGenomes[:, list(indices)] = norm_genome
+        bootstrapGenomes = pd.DataFrame(bootstrapGenomes)
     return bootstrapGenomes
 
 
@@ -281,10 +311,34 @@ def denormalize_samples(genomes, original_totals, normalization_value=30000):
     return results
 
 
+def genomes_tensor(genomes, precision):
+    """
+    Convert the input matrix to a tensor of the requested precision in one
+    step, so that "double" is not rounded through float32 first.
+    """
+    dtype = torch.float64 if precision == "double" else torch.float32
+    return torch.as_tensor(np.asarray(genomes), dtype=dtype)
+
+
+def replicate_diagnostics(genomes, W, H, convergence):
+    """
+    Fit diagnostics of one NMF replicate: the mean similarity metrics between
+    the matrix that NMF fitted (the bootstrapped, normalized genomes) and W @ H
+    as returned by NMF, followed by the number of iterations. Used by both the
+    CPU and the GPU path, so that their values describe the same state.
+    """
+    est_genome = np.array(np.dot(W, H))
+    similarities = calculate_similarities(
+        np.array(genomes), est_genome, sample_names=False
+    )[0].iloc[:, 2:]
+    similarities = np.array(np.mean(similarities, axis=0)).T
+    return np.append(similarities, convergence)
+
+
 def nnmf_cpu(
     genomes, nfactors, init="nndsvd", execution_parameters=None, generator=None
 ):
-    genomes = torch.from_numpy(genomes).float()
+    genomes = genomes_tensor(genomes, execution_parameters["precision"])
     min_iterations = execution_parameters["min_NMF_iterations"]
     max_iterations = execution_parameters["max_NMF_iterations"]
     tolerance = execution_parameters["NMF_tolerance"]
@@ -314,15 +368,7 @@ def nnmf_cpu(
 
     W = Ws[0]
     H = Hs[0]
-    # calculate L1, L2 and KL for the solution
-
-    est_genome = np.array(np.dot(W, H))
-    genomes = np.array(genomes)
-    similarities = calculate_similarities(genomes, est_genome, sample_names=False)[
-        0
-    ].iloc[:, 2:]
-    similarities = np.array(np.mean(similarities, axis=0)).T
-    similarities = np.append(similarities, convergence)
+    similarities = replicate_diagnostics(genomes, W, H, convergence)
     return W, H, similarities
 
 
@@ -332,7 +378,8 @@ def nnmf_gpu(
     p = current_process()
     identity = p._identity[0]
     gpu_id = identity % torch.cuda.device_count()
-    genomes = torch.from_numpy(genomes).float().cuda(gpu_id)
+    matrices = np.asarray(genomes)
+    genomes = genomes_tensor(genomes, execution_parameters["precision"]).cuda(gpu_id)
     min_iterations = execution_parameters["min_NMF_iterations"]
     max_iterations = execution_parameters["max_NMF_iterations"]
     tolerance = execution_parameters["NMF_tolerance"]
@@ -358,14 +405,11 @@ def nnmf_gpu(
     for W in net.W.detach().cpu().numpy():
         Ws.append(np.matrix(W))
 
-    if len(Ws) == 1:
-        convergence = int(net.conv)
-    else:
-        convergence = int(max_iterations)
-
-    convergence = [convergence] * len(Ws)
-
-    return Ws, Hs, convergence
+    diagnostics = [
+        replicate_diagnostics(matrices[i], Ws[i], Hs[i], convergence)
+        for i, convergence in enumerate(net.replicate_conv)
+    ]
+    return Ws, Hs, diagnostics
 
 
 def BootstrapCancerGenomes(genomes, seed=None):
@@ -410,8 +454,36 @@ def BootstrapCancerGenomes(genomes, seed=None):
 
 
 # NMF version for the multiprocessing library
+def prepare_replicate(
+    genomes, poisson_rng, resample, np_dtype, norm, normalization_cutoff
+):
+    """
+    Build the matrix that NMF fits for one replicate: a bootstrap resample drawn
+    with the replicate's own generator (if resample), values below 1e-4 raised to
+    1e-4, then normalization. Returns the matrix and the sample totals needed to
+    denormalize the replicate's H.
+    """
+    if resample == True:
+        bootstrapGenomes = BootstrapCancerGenomes(genomes, seed=poisson_rng)
+    else:
+        bootstrapGenomes = genomes
+
+    bootstrapGenomes = bootstrapGenomes.astype(np_dtype)
+    bootstrapGenomes[bootstrapGenomes < 0.0001] = 0.0001
+
+    # normalize the samples to handle the hypermutators
+    totalMutations = np.sum(bootstrapGenomes, axis=0)
+    bootstrapGenomes = normalize_samples(
+        bootstrapGenomes,
+        totalMutations,
+        norm=norm,
+        normalization_cutoff=normalization_cutoff,
+    )
+    return np.array(bootstrapGenomes), totalMutations
+
+
 def pnmf(
-    batch_generator_pair=[1, None],
+    replicate_generators,
     genomes=1,
     totalProcesses=1,
     resample=True,
@@ -421,106 +493,92 @@ def pnmf(
     gpu=False,
     execution_parameters=None,
 ):
+    """
+    Run the NMF replicates of one task. replicate_generators holds one
+    (poisson, W/H initialization) pair of seed sequences per replicate. CPU and
+    GPU follow the same steps for every replicate, so a replicate gets the same
+    bootstrap, the same start and its own denormalization however it is batched.
+    Returns a list of (W, H, diagnostics), one per replicate.
+    """
     tic = time.time()
-    totalMutations = np.sum(genomes, axis=0)
     genomes = pd.DataFrame(genomes)  # creating/loading a dataframe/matrix
-
-    # generators used for noise and matrix initialization
-    poisson_generator = batch_generator_pair[1][0]
-    rep_generator = batch_generator_pair[1][1]
-    rand_rng = Generator(PCG64DXSM(rep_generator))
-    poisson_rng = Generator(PCG64DXSM(poisson_generator))
 
     precision = execution_parameters["precision"] if execution_parameters else "single"
     np_dtype = np.float32 if precision == "single" else np.float64
 
+    poisson_rngs = [Generator(PCG64DXSM(pair[0])) for pair in replicate_generators]
+    rand_rngs = [Generator(PCG64DXSM(pair[1])) for pair in replicate_generators]
+    prepared = [
+        prepare_replicate(
+            genomes, rng, resample, np_dtype, norm, normalization_cutoff
+        )
+        for rng in poisson_rngs
+    ]
+
     if gpu:
-        batch_size = batch_generator_pair[0]
-        nmf_fn = nnmf_gpu
-        results = []
-        genome_list = []
-
-        for b in range(batch_size):
-            if resample == True:
-                bootstrapGenomes = BootstrapCancerGenomes(genomes, seed=poisson_rng)
-            else:
-                bootstrapGenomes = genomes
-
-            bootstrapGenomes = bootstrapGenomes.astype(np_dtype)
-            bootstrapGenomes[bootstrapGenomes < 0.0001] = 0.0001
-            totalMutations = np.sum(bootstrapGenomes, axis=0)
-            bootstrapGenomes = normalize_samples(
-                bootstrapGenomes,
-                totalMutations,
-                norm=norm,
-                normalization_cutoff=normalization_cutoff,
-            )
-            genome_list.append(bootstrapGenomes.values)
-
-        g = np.array(genome_list)
-
-        W, H, Conv = nmf_fn(
-            g,
+        Ws, Hs, diagnostics = nnmf_gpu(
+            np.array([matrix for matrix, _ in prepared]),
             totalProcesses,
             init=init,
             execution_parameters=execution_parameters,
-            generator=rand_rng,
+            generator=rand_rngs,
         )
-        for i in range(len(W)):
-            _W = np.array(W[i])
-            _H = np.array(H[i])
-            total = _W.sum(axis=0, keepdims=True)#[np.newaxis]
-            _W = _W / total
-            _H = _H * total.T
-            _H = denormalize_samples(_H, totalMutations)
-            _conv = Conv[i]
-            results.append((_W, _H, _conv))
-            print("process " + str(totalProcesses) + " continues please wait... ")
-            print("execution time: {} seconds \n".format(round(time.time() - tic), 2))
-        return results
-
     else:
-        nmf_fn = nnmf_cpu
-        if resample == True:
-            bootstrapGenomes = BootstrapCancerGenomes(genomes, seed=poisson_rng)
-        else:
-            bootstrapGenomes = genomes
+        Ws, Hs, diagnostics = [], [], []
+        for (matrix, _), rand_rng in zip(prepared, rand_rngs):
+            W, H, kl = nnmf_cpu(
+                matrix,
+                totalProcesses,
+                init=init,
+                execution_parameters=execution_parameters,
+                generator=rand_rng,
+            )
+            Ws.append(W)
+            Hs.append(H)
+            diagnostics.append(kl)
 
-        bootstrapGenomes = bootstrapGenomes.astype(np_dtype)
-        bootstrapGenomes[bootstrapGenomes < 0.0001] = 0.0001
-
-        # normalize the samples to handle the hypermutators
-
-        totalMutations = np.sum(bootstrapGenomes, axis=0)
-
-        bootstrapGenomes = normalize_samples(
-            bootstrapGenomes,
-            totalMutations,
-            norm=norm,
-            normalization_cutoff=normalization_cutoff,
-        )
-
-        bootstrapGenomes = np.array(bootstrapGenomes)
-
-        W, H, kl = nmf_fn(
-            bootstrapGenomes,
-            totalProcesses,
-            init=init,
-            execution_parameters=execution_parameters,
-            generator=rand_rng,
-        )  # uses custom function nnmf
-
+    results = []
+    for W, H, kl, (_, totalMutations) in zip(Ws, Hs, diagnostics, prepared):
         W = np.array(W)
         H = np.array(H)
-        total = W.sum(axis=0, keepdims=True) #[np.newaxis]
+        total = W.sum(axis=0, keepdims=True)
         W = W / total
         H = H * total.T
 
-        # denormalize H
+        # denormalize H with this replicate's own sample totals
         H = denormalize_samples(H, totalMutations)
+        results.append((W, H, kl))
         print("process " + str(totalProcesses) + " continues please wait... ")
         print("execution time: {} seconds \n".format(round(time.time() - tic), 2))
-        return W, H, kl
+    return results
+
+
+def replicate_batches(iterations, batch_size, gpu):
+    """
+    Number of replicates run by each parallel task. The GPU path runs a batch of
+    replicates per task; the CPU path runs exactly one replicate per task, so
+    batch_size must not reduce the number of CPU replicates.
+    """
+    iterations = int(iterations)
+    if not gpu:
+        return [1] * iterations
+    batches = [batch_size] * (iterations // batch_size)
+    if iterations % batch_size != 0:
+        batches.append(iterations % batch_size)
+    return batches
+
+
+def split_generators(generator_pairs, batches):
+    """
+    Give every task the generator pairs of its own replicates, in order, so that
+    replicate k uses pair k on CPU and GPU, whatever the batch size.
+    """
+    groups = []
+    start = 0
+    for size in batches:
+        groups.append(generator_pairs[start : start + size])
+        start += size
+    return groups
 
 
 def parallel_runs(
@@ -546,12 +604,9 @@ def parallel_runs(
             + " is in progress\n===================================>"
         )
     if n_cpu == -1:
-        pool = multiprocessing.Pool()
+        pool = SPAWN.Pool()
     else:
-        pool = multiprocessing.Pool(processes=n_cpu)
-
-    num_full_batches = iterations // batch_size
-    last_batch_size = iterations % batch_size
+        pool = SPAWN.Pool(processes=n_cpu)
 
     # generators used for noise and matrix initialization
     poisson_generator = replicate_generators[0]
@@ -564,50 +619,32 @@ def parallel_runs(
     for i, j in zip(poisson_rand_list, sub_rand_generators):
         generator_pair_list.append([i, j])
 
-    batches = [batch_size for _ in range(num_full_batches)]
-    if last_batch_size != 0:
-        batches.append(last_batch_size)
+    task_generators = split_generators(
+        generator_pair_list, replicate_batches(iterations, batch_size, gpu)
+    )
 
-    batch_generator_pair = []
+    pool_nmf = partial(
+        pnmf,
+        genomes=genomes,
+        totalProcesses=totalProcesses,
+        resample=resample,
+        init=init,
+        normalization_cutoff=normalization_cutoff,
+        norm=norm,
+        gpu=gpu,
+        execution_parameters=execution_parameters,
+    )
+    result_list = pool.map(pool_nmf, task_generators)
+    pool.close()
+    pool.join()
+    flat_list = [item for sublist in result_list for item in sublist]
 
-    # There will be nmf_replicate number of batch_generator_pair elements
-    for i, j in zip(batches, generator_pair_list):
-        batch_generator_pair.append([i, j])
-
-    if gpu == True:
-        # submit jobs for parallel processing
-        pool_nmf = partial(
-            pnmf,
-            genomes=genomes,
-            totalProcesses=totalProcesses,
-            resample=resample,
-            init=init,
-            normalization_cutoff=normalization_cutoff,
-            norm=norm,
-            gpu=gpu,
-            execution_parameters=execution_parameters,
+    if len(flat_list) != iterations:
+        raise RuntimeError(
+            "NMF replicate count mismatch: {} requested, {} returned".format(
+                iterations, len(flat_list)
+            )
         )
-        result_list = pool.map(pool_nmf, batch_generator_pair)
-        pool.close()
-        pool.join()
-        flat_list = [item for sublist in result_list for item in sublist]
-
-    else:
-        pool_nmf = partial(
-            pnmf,
-            genomes=genomes,
-            totalProcesses=totalProcesses,
-            resample=resample,
-            init=init,
-            normalization_cutoff=normalization_cutoff,
-            norm=norm,
-            gpu=gpu,
-            execution_parameters=execution_parameters,
-        )
-        result_list = pool.map(pool_nmf, batch_generator_pair)
-        pool.close()
-        pool.join()
-        flat_list = result_list
     return flat_list
 
 
@@ -652,38 +689,13 @@ def decipher_signatures(
     ##############################################################################################################################################################################
     ############################################################# The parallel processing takes place here #######################################################################
     ##############################################################################################################################################################################
-    if gpu == True:
-        results = []
-        flat_list = parallel_runs(
-            execution_parameters,
-            genomes=genomes,
-            totalProcesses=totalProcesses,
-            verbose=False,
-            replicate_generators=replicate_generators,
-        )
-
-        for items in range(len(flat_list)):
-            W = flat_list[items][0]
-            H = flat_list[items][1]
-            conv = flat_list[items][2]
-            # calculate L1, L2 and KL for the solution
-            est_genome = np.array(np.dot(W, H))
-
-            similarities = calculate_similarities(
-                genomes, est_genome, sample_names=False
-            )[0].iloc[:, 2:]
-            similarities = np.array(np.mean(similarities, axis=0)).T
-            similarities = np.append(similarities, conv)
-
-            results.append([W, H, similarities])
-    else:
-        results = parallel_runs(
-            execution_parameters,
-            genomes=genomes,
-            totalProcesses=totalProcesses,
-            verbose=False,
-            replicate_generators=replicate_generators,
-        )
+    results = parallel_runs(
+        execution_parameters,
+        genomes=genomes,
+        totalProcesses=totalProcesses,
+        verbose=False,
+        replicate_generators=replicate_generators,
+    )
     toc = time.time()
     print(
         "Time taken to collect {} iterations for {} signatures is {} seconds".format(
@@ -699,18 +711,17 @@ def decipher_signatures(
     Hall = np.zeros((totalProcesses * totalIterations, totalGenomes))
     converge_information = np.zeros((totalIterations, 7))
 
-    finalgenomeErrors = np.zeros((totalMutationTypes, totalGenomes, totalIterations))
-    finalgenomesReconstructed = np.zeros(
-        (totalMutationTypes, totalGenomes, totalIterations)
-    )
 
     processCount = 0
     for j in range(len(results)):
         W = results[j][0]
         H = results[j][1]
+        if not (np.isfinite(W).all() and np.isfinite(H).all()):
+            raise FloatingPointError(
+                "NMF replicate {} of {} at rank {} returned non-finite values "
+                "(NaN or inf) in W or H.".format(j + 1, len(results), totalProcesses)
+            )
         converge_information[j, :] = results[j][2][:]
-        finalgenomeErrors[:, :, j] = genomes - np.dot(W, H)
-        finalgenomesReconstructed[:, :, j] = np.dot(W, H)
         Wall[:, processCount : (processCount + totalProcesses)] = W
         Hall[processCount : (processCount + totalProcesses), :] = H
         processCount = processCount + totalProcesses
@@ -745,8 +756,6 @@ def decipher_signatures(
         exposureSTE,
         avgSilhouetteCoefficients,
         np.round(clusterSilhouetteCoefficients, 3),
-        finalgenomeErrors,
-        finalgenomesReconstructed,
         Wall,
         Hall,
         converge_information,
@@ -928,18 +937,7 @@ def reclustering(
 
     # Concatenate all DataFrames at once
     clusters = pd.concat(clusters_list, ignore_index=True)
-    try:
-        if dist == "cosine":
-            SilhouetteCoefficients = metrics.silhouette_samples(
-                clusters, labels, metric="cosine"
-            )
-        if dist == "correlation":
-            SilhouetteCoefficients = metrics.silhouette_samples(
-                clusters, labels, metric="correlation"
-            )
-
-    except:
-        SilhouetteCoefficients = np.ones((len(labels), 1))
+    SilhouetteCoefficients = silhouette_stability(clusters, labels, dist)
 
     avgSilhouetteCoefficients = np.mean(SilhouetteCoefficients)
 
@@ -1020,9 +1018,9 @@ def parallel_clustering(
     cluster_rand_seq=None,
 ):
     if n_cpu == -1:
-        pool = multiprocessing.Pool()
+        pool = SPAWN.Pool()
     else:
-        pool = multiprocessing.Pool(processes=n_cpu)
+        pool = SPAWN.Pool(processes=n_cpu)
 
     # create random generators for each subprocess
     sub_rand_generator = cluster_rand_seq.spawn(iterations)
@@ -1041,6 +1039,29 @@ def parallel_clustering(
 
 
 # To select the best clustering converge of the cluster_converge_innerloop
+def silhouette_stability(clusters, labels, dist):
+    """
+    Silhouette coefficient of every replicate signature. With a single cluster
+    (rank 1) the silhouette is undefined and every signature is given 1.0 by
+    convention. Every other failure is raised instead of being reported as
+    perfect stability.
+    """
+    n_clusters = len(set(labels))
+    if n_clusters == 1:
+        return np.ones(len(labels))
+    if n_clusters >= len(labels):
+        raise ValueError(
+            "Signature stability needs at least 2 NMF replicates per signature "
+            "({} signatures, {} replicate signatures).".format(n_clusters, len(labels))
+        )
+    try:
+        return metrics.silhouette_samples(clusters, labels, metric=dist)
+    except Exception as err:
+        raise RuntimeError(
+            "Silhouette calculation failed for rank {}: {}".format(n_clusters, err)
+        ) from err
+
+
 def cluster_converge_outerloop(
     Wall, Hall, totalprocess, dist="cosine", gpu=False, cluster_rand_seq=None, n_cpu=-1
 ):
@@ -1315,6 +1336,15 @@ def read_csv(filename, folder=False):
 
 
 ###################################################################################### Export Results ###########################################
+def integer_activities(exposures):
+    """
+    Whole-number activities for the exported activity files. Round to the
+    nearest integer; astype(int) alone truncates towards zero, which
+    under-reports every activity (0.99 became 0).
+    """
+    return np.rint(exposures).astype(int)
+
+
 def export_information(
     loopResults,
     mutation_type,
@@ -1405,7 +1435,7 @@ def export_information(
     exposures_float = exposures_float.T
     exposures_float = exposures_float.rename_axis("Samples", axis="columns")
 
-    exposureAvg_int = pd.DataFrame(exposureAvg.astype(int))
+    exposureAvg_int = pd.DataFrame(integer_activities(exposureAvg))
     exposures = exposureAvg_int.set_index(listOfSignatures)
     exposures.columns = colnames
     exposures = exposures.T
@@ -1528,7 +1558,7 @@ def export_information(
     )
 
     # export convergence information
-    converge_information = loopResults[13]
+    converge_information = loopResults[11]
     converge_information = pd.DataFrame(np.around(converge_information, decimals=3))
     conv_index = list(range(1, len(converge_information) + 1))
     colmetrices = [

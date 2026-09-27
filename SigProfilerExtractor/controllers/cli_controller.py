@@ -77,8 +77,11 @@ def parse_arguments_extractor(args: List[str], description: str) -> argparse.Nam
     parser.add_argument(
         "--maximum_signatures",
         type=int,
-        default=10,
-        help="Maximum number of signatures to be extracted (default: 10).",
+        default=sigpro.DEFAULT_MAXIMUM_SIGNATURES,
+        help=(
+            "Maximum number of signatures to be extracted "
+            f"(default: {sigpro.DEFAULT_MAXIMUM_SIGNATURES})."
+        ),
     )
     parser.add_argument(
         "--nmf_replicates",
@@ -138,7 +141,7 @@ def parse_arguments_extractor(args: List[str], description: str) -> argparse.Nam
     parser.add_argument(
         "--matrix_normalization",
         default="gmm",
-        help="Method of normalizing the genome matrix before it is analyzed by NMF (default: 'gmm'). Options are 'custom', 'gmm', 'log2', or 'none'.",
+        help="Method of normalizing the genome matrix before it is analyzed by NMF (default: 'gmm'). Options are 'gmm', '100X', 'log2', 'none', or a positive integer used as a manual cutoff (for example 5000).",
     )
     parser.add_argument(
         "--min_nmf_iterations",

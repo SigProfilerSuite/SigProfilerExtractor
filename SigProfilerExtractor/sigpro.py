@@ -56,6 +56,7 @@ from numpy.random import SeedSequence
 from sigProfilerPlotting import sigProfilerPlotting as sigPlot
 
 DEFAULT_COSMIC_VERSION = 3.6
+DEFAULT_MAXIMUM_SIGNATURES = 25
 SUPPORTED_COSMIC_VERSIONS = (1, 2, 3, 3.1, 3.2, 3.3, 3.4, 3.5, 3.6)
 
 MUTTYPE = "MutationType"
@@ -237,6 +238,83 @@ def record_parameters(sysdata, execution_parameters, start_time):
     sysdata.write("[{}] Analysis started: \n".format(str(start_time).split(".")[0]))
 
 
+def check_input_samples(data):
+    """
+    Check the sample columns of an input matrix (first column: mutation types).
+    Columns that are entirely empty (for example from a trailing tab) and samples
+    with no mutations are removed and returned so they can be reported. A sample
+    with only some values missing raises ValueError naming the sample and the
+    mutation types, rather than being dropped silently.
+    """
+    samples = data.iloc[:, 1:]
+    missing = samples.isna()
+    empty_columns = [str(c) for c in samples.columns[missing.all(axis=0)]]
+    partial = samples.columns[missing.any(axis=0) & ~missing.all(axis=0)]
+    if len(partial) > 0:
+        details = []
+        for sample in partial[:5]:
+            rows = data.iloc[:, 0][missing[sample].to_numpy()].astype(str).tolist()
+            details.append("{} ({})".format(sample, ", ".join(rows[:5])))
+        raise ValueError(
+            "The input matrix has missing values in {} sample(s): {}".format(
+                len(partial), "; ".join(details)
+            )
+        )
+    data = data.drop(columns=samples.columns[missing.all(axis=0)])
+    samples = data.iloc[:, 1:]
+    zero_samples = [str(c) for c in samples.columns[(samples == 0).all(axis=0)]]
+    data = data.drop(columns=samples.columns[(samples == 0).all(axis=0)])
+    return data, empty_columns, zero_samples
+
+
+def move_previous_results(directory):
+    """
+    If directory exists and is not empty, move it to
+    <directory>_previous_<timestamp> so that files from an earlier run cannot
+    be mistaken for results of this run. Nothing is deleted. Returns the new
+    path, or None if nothing was moved.
+    """
+    if not (os.path.isdir(directory) and os.listdir(directory)):
+        return None
+    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    target = "{}_previous_{}".format(directory, stamp)
+    suffix = 1
+    while os.path.exists(target):
+        suffix += 1
+        target = "{}_previous_{}_{}".format(directory, stamp, suffix)
+    shutil.move(directory, target)
+    return target
+
+
+def sv_matrix_directory(input_data):
+    """
+    Folder for the SV matrices generated from a BEDPE input folder: SV_Matrices
+    next to the input folder. The path is normalized first, so "/data/sv" and
+    "/data/sv/" give the same result.
+    """
+    return os.path.join(os.path.dirname(os.path.normpath(input_data)), "SV_Matrices")
+
+
+def read_seed_file(path):
+    """
+    Read a tab-separated seeds file with a "Seed" column. A single root seed
+    drives every random generator of the run, so the file must hold exactly one.
+    Returns the file as a DataFrame and the seed as an int.
+    """
+    try:
+        seeds = pd.read_csv(path, sep="\t", index_col=0)
+        seed_values = seeds["Seed"].to_numpy()
+    except Exception as err:
+        raise ValueError("Please set valid seeds") from err
+    if len(seed_values) != 1:
+        raise ValueError(
+            "The seeds file must contain exactly one seed, found {}.".format(
+                len(seed_values)
+            )
+        )
+    return seeds, int(seed_values[0])
+
+
 def sigProfilerExtractor(
     input_type,
     output,
@@ -247,7 +325,7 @@ def sigProfilerExtractor(
     context_type="default",
     exome=False,
     minimum_signatures=1,
-    maximum_signatures=25,
+    maximum_signatures=DEFAULT_MAXIMUM_SIGNATURES,
     nmf_replicates=100,
     resample=True,
     batch_size=1,
@@ -308,18 +386,18 @@ def sigProfilerExtractor(
 
     minimum_signature: A positive integer, optional. The minimum number of signatures to be extracted. The default value is 1
 
-    maximum_signatures: A positive integer, optional. The maximum number of signatures to be extracted. The default value is 10
+    maximum_signatures: A positive integer, optional. The maximum number of signatures to be extracted. The default value is 25
 
     nmf_replicates: A positive integer, optional. The number of iteration to be performed to extract each number signature. The default value is 100
 
     resample: Boolean, optional. Default is True. If True, add poisson noise to samples by resampling.
 
     seeds: Boolean. Default is "random". If random, then the seeds for resampling will be random for different analysis.
-                  If not random, then seeds will be obtained from a given path of a .txt file that contains a list of seed.
+                  If not random, then the seed will be obtained from a given path of a tab-separated .txt file with a "Seed" column holding exactly one seed.
 
     NMF RUNS:-
 
-    matrix_normalization: A string. Method of normalizing the genome matrix before it is analyzed by NMF. Default is "log2". Other options are "gmm", "100X" or "no_normalization".
+    matrix_normalization: A string or a positive integer. Method of normalizing the genome matrix before it is analyzed by NMF. Default is "gmm". Other options are "100X", "log2", "none", or a positive integer used as a manual cutoff (for example 5000).
 
     nmf_init: A String. The initialization algorithm for W and H matrix of NMF. Options are 'random', 'nndsvd', 'nndsvda', 'nndsvdar' and 'nndsvd_min'
               Default is 'nndsvd_min'.
@@ -518,13 +596,13 @@ def sigProfilerExtractor(
         "get_all_signature_matrices": get_all_signature_matrices,
     }
 
+    sub.check_matrix_normalization(matrix_normalization)
+
     ################################ take the inputs from the general optional arguments ####################################
     startProcess = minimum_signatures
     endProcess = maximum_signatures
     mtype = context_type
     wall = get_all_signature_matrices
-    add_penalty = nnls_add_penalty
-    remove_penalty = nnls_remove_penalty
     genome_build = opportunity_genome
     refgen = reference_genome
 
@@ -538,18 +616,13 @@ def sigProfilerExtractor(
     if seeds == "random":
         execution_parameters["seeds"] = seeds
         tmp_seed = SeedSequence().entropy
-        seed = np.array(tmp_seed)
+        seed = int(tmp_seed)
         seeds = pd.DataFrame([tmp_seed], columns=["Seed"])
         seeds.to_csv(out_put + "/Seeds.txt", sep="\t", quoting=None)
     else:
-        try:
-            execution_parameters["seeds"] = seeds
-            seeds = pd.read_csv(seeds, sep="\t", index_col=0)
-            seeds.to_csv(out_put + "/Seeds.txt", sep="\t")
-            seed = np.array(seeds["Seed"])
-
-        except:
-            raise ValueError("Please set valid seeds")
+        execution_parameters["seeds"] = seeds
+        seeds, seed = read_seed_file(seeds)
+        seeds.to_csv(out_put + "/Seeds.txt", sep="\t")
 
     if input_type == "text" or input_type == "table" or input_type == "matrix":
         ################################### For text input files ######################################################
@@ -568,8 +641,15 @@ def sigProfilerExtractor(
         else:
             data = pd.read_csv(text_file, sep="\t").iloc[:, :]
 
-        data = data.dropna(axis=1, inplace=False)
-        data = data.loc[:, (data != 0).any(axis=0)]
+        data, empty_columns, zero_samples = check_input_samples(data)
+        for label, dropped in (
+            ("Empty columns removed from the input", empty_columns),
+            ("Samples with no mutations removed from the input", zero_samples),
+        ):
+            if dropped:
+                message = "{} ({}): {}".format(label, len(dropped), ", ".join(dropped))
+                print(message)
+                sysdata.write(message + "\n")
         # printing the number of mutations
         mutation_number = str(data.shape[0])
         # Re-indexing the input matrix file by using process_input function from SigProfilePlotting
@@ -594,7 +674,7 @@ def sigProfilerExtractor(
             mtypes = ["CNV48"]
         elif mtypes[0] == "32":
             mtypes = ["SV32"]
-        elif mtypes[0] == "96" or "288" or "384" or "1536" or "4608":
+        elif mtypes[0] in {"96", "288", "384", "1536", "4608"}:
             mtypes = ["SBS" + mtypes[0]]
         else:
             mtypes = ["CH" + mtypes[0]]
@@ -671,7 +751,7 @@ def sigProfilerExtractor(
         # create a directory to write the output matrices to
         title = project
         mtypes = ["SV32"]
-        sv_outputs = os.path.join(os.path.split(input_data)[0], "SV_Matrices")
+        sv_outputs = sv_matrix_directory(input_data)
 
         # SV input processing, execution parameters
         genomes = sv.generateSVMatrix(project, project_name, sv_outputs)
@@ -708,6 +788,8 @@ def sigProfilerExtractor(
     sysdata.close()
     ###########################################################################################################################################################################################
 
+    analyzed_contexts = []
+    skipped_contexts = []
     for m in mtypes:
         # we need to rename the m because users input could be SBS96, SBS1536, DBS78, ID83 etc
         if m.startswith("SBS"):
@@ -729,7 +811,7 @@ def sigProfilerExtractor(
             or m.startswith("CNV")
             or m.startswith("SV")
         ):
-            if m.startswith("SBS"):
+            if m.startswith("SBS") or m.startswith("CH"):
                 mutation_type = m
             elif m in ["96", "288", "384", "1536", "4608"]:
                 mutation_type = "SBS" + m
@@ -765,6 +847,7 @@ def sigProfilerExtractor(
                 )
                 print("Context {} is not available in the current vcf files".format(m))
                 sysdata.close()
+                skipped_contexts.append("{} (not available)".format(m))
                 continue
             # check if the genome is a nonzero matrix
             if genomes.shape == (0, 0):
@@ -776,6 +859,7 @@ def sigProfilerExtractor(
                 )
                 print("Sample is not a nozero matrix for the mutation context " + m)
                 sysdata.close()
+                skipped_contexts.append("{} (empty matrix)".format(m))
                 continue
 
             genomes = genomes.loc[:, (genomes != 0).any(axis=0)]
@@ -784,9 +868,13 @@ def sigProfilerExtractor(
             colnames = genomes.columns
             allcolnames = colnames.copy()  # save the allcolnames for the final results
 
-        # check if start and end processes are bigger than the number of samples
-        startProcess = min(startProcess, genomes.shape[1])
-        endProcess = min(endProcess, genomes.shape[1])
+        analyzed_contexts.append(mutation_type)
+
+        # limit the requested rank range to the number of samples of this context;
+        # recompute from the requested values so that one context cannot narrow
+        # the range of the contexts that follow it
+        startProcess = min(minimum_signatures, genomes.shape[1])
+        endProcess = min(maximum_signatures, genomes.shape[1])
 
         # in the plotting funciton "ID" is used as "INDEL"
         if m == "ID":
@@ -798,6 +886,14 @@ def sigProfilerExtractor(
         genomes = np.array(genomes)
         information = []
         layer_directory = output
+        previous = move_previous_results(layer_directory)
+        if previous is not None:
+            message = "Existing results in {} were moved to {}".format(
+                layer_directory, previous
+            )
+            print(message)
+            with open(out_put + "/JOB_METADATA.txt", "a") as sysdata:
+                sysdata.write("\n" + message + "\n")
         try:
             if not os.path.exists(layer_directory):
                 os.makedirs(layer_directory)
@@ -816,8 +912,11 @@ def sigProfilerExtractor(
 
         # get the cutoff for normatization to handle the hypermutators
 
+        # derive the GMM random state from the root seed, so that the cutoff is
+        # reproducible from Seeds.txt
+        gmm_random_state = int(SeedSequence(int(seed)).generate_state(1)[0])
         normalization_cutoff = sub.get_normalization_cutoff(
-            genomes, manual_cutoff=100 * genomes.shape[0]
+            genomes, manual_cutoff=100 * genomes.shape[0], random_state=gmm_random_state
         )
         execution_parameters["normalization_cutoff"] = normalization_cutoff
 
@@ -837,6 +936,14 @@ def sigProfilerExtractor(
                 mutation_type,
                 genomes.shape[0],
                 genomes.shape[1],
+            )
+        )
+        sysdata.write(
+            "\n[{}] Signature ranks evaluated for {}: {} to {}\n".format(
+                str(datetime.datetime.now()).split(".")[0],
+                mutation_type,
+                startProcess,
+                endProcess,
             )
         )
         if execution_parameters["matrix_normalization"] == "gmm":
@@ -901,8 +1008,6 @@ def sigProfilerExtractor(
                 exposureStd,
                 avgSilhouetteCoefficients,
                 clusterSilhouetteCoefficients,
-                finalgenomeErrors,
-                finalgenomesReconstructed,
                 finalWall,
                 finalHall,
                 converge_information,
@@ -920,9 +1025,9 @@ def sigProfilerExtractor(
             if avgSilhouetteCoefficients > -1.0:
                 stic = time.time()
                 if cpu > 0:
-                    pool = mp.Pool(processes=cpu)
+                    pool = sub.SPAWN.Pool(processes=cpu)
                 else:
-                    pool = mp.Pool()
+                    pool = sub.SPAWN.Pool()
                 results = [
                     pool.apply_async(
                         spasub.fit_signatures_pool,
@@ -981,8 +1086,6 @@ def sigProfilerExtractor(
                 all_similarities,
                 signature_stats,
                 reconstruction_error,
-                finalgenomeErrors,
-                finalgenomesReconstructed,
                 converge_information,
                 finalWall,
                 finalHall,
@@ -1137,7 +1240,22 @@ def sigProfilerExtractor(
                 make_metadata=False,
                 volume=volume,
                 cpu=assignment_cpu,
+                nnls_add_penalty=nnls_add_penalty,
+                nnls_remove_penalty=nnls_remove_penalty,
+                initial_remove_penalty=initial_remove_penalty,
+                collapse_to_SBS96=collapse_to_SBS96,
             )
+
+    if skipped_contexts:
+        message = "Mutation contexts skipped: {}".format(", ".join(skipped_contexts))
+        print(message)
+        with open(out_put + "/JOB_METADATA.txt", "a") as sysdata:
+            sysdata.write("\n" + message + "\n")
+    if not analyzed_contexts:
+        message = "No mutation context could be analyzed; no signatures were extracted."
+        with open(out_put + "/JOB_METADATA.txt", "a") as sysdata:
+            sysdata.write("\n-------Job Status------- \n" + message + "\n")
+        raise RuntimeError(message)
 
     sysdata = open(out_put + "/JOB_METADATA.txt", "a")
     end_time = datetime.datetime.now()
