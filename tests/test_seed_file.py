@@ -24,7 +24,7 @@ class SeedFileTest(unittest.TestCase):
             read_seed_file(self.write("\tSeed\n0\t1\n1\t2\n"))
 
     def test_missing_seed_column_is_rejected(self):
-        with self.assertRaisesRegex(ValueError, "valid seeds"):
+        with self.assertRaisesRegex(ValueError, "must contain a 'Seed' column"):
             read_seed_file(self.write("\tValue\n0\t1\n"))
 
 

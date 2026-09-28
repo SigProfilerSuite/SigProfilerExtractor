@@ -303,9 +303,11 @@ def read_seed_file(path):
     """
     try:
         seeds = pd.read_csv(path, sep="\t", index_col=0)
-        seed_values = seeds["Seed"].to_numpy()
     except Exception as err:
         raise ValueError("Please set valid seeds") from err
+    if "Seed" not in seeds.columns:
+        raise ValueError("The seeds file must contain a 'Seed' column.")
+    seed_values = seeds["Seed"].to_numpy()
     if len(seed_values) != 1:
         raise ValueError(
             "The seeds file must contain exactly one seed, found {}.".format(
