@@ -303,9 +303,11 @@ def read_seed_file(path):
     """
     try:
         seeds = pd.read_csv(path, sep="\t", index_col=0)
-        seed_values = seeds["Seed"].to_numpy()
     except Exception as err:
         raise ValueError("Please set valid seeds") from err
+    if "Seed" not in seeds.columns:
+        raise ValueError("The seeds file must contain a 'Seed' column.")
+    seed_values = seeds["Seed"].to_numpy()
     if len(seed_values) != 1:
         raise ValueError(
             "The seeds file must contain exactly one seed, found {}.".format(
@@ -392,8 +394,7 @@ def sigProfilerExtractor(
 
     resample: Boolean, optional. Default is True. If True, add poisson noise to samples by resampling.
 
-    seeds: Boolean. Default is "random". If random, then the seeds for resampling will be random for different analysis.
-                  If not random, then the seed will be obtained from a given path of a tab-separated .txt file with a "Seed" column holding exactly one seed.
+    seeds: String, optional. Controls reproducible NMF resampling and initialization. The default value, "random", generates a new root seed for each analysis and writes it to Seeds.txt. Otherwise, provide the path to a tab-separated Seeds.txt file with a "Seed" column holding exactly one root seed.
 
     NMF RUNS:-
 
@@ -420,8 +421,7 @@ def sigProfilerExtractor(
     gpu:Boolean, optional. Defines if the GPU resource will used if available. Default is False. If True, the GPU resource
         will be used in the computation.
 
-    batch_size: An integer. Will be effective only if the GPU is used. Defines the number of NMF replicates to be performed
-              by each CPU during the parallel processing. Default is 1.
+    batch_size: A positive integer, optional. Effective only when the GPU is used. Defines how many NMF replicates are grouped into each GPU batch. Every replicate has its own resampling and initialization generators, sample totals, and convergence stopping point, whether it runs alone or in a batch. Default is 1.
 
 
     SOLUTION ESTIMATION THRESH-HOLDS:-

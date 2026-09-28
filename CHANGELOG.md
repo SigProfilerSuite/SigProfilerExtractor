@@ -10,11 +10,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ### Changed
 - Updated the default COSMIC reference signature version from 3.5 to 3.6.
 - Updated the minimum SigProfilerAssignment version to 1.1.5 for COSMIC v3.6 support.
+- Changed the CLI default for `--maximum_signatures` from 10 to 25 so it matches the Python API.
+- GPU batches now give every NMF replicate its own resampling and initialization generators, sample totals, and convergence stopping point, matching CPU and single-replicate GPU behavior.
+- A seeds file now contains exactly one root seed. All random generators used by a run are derived reproducibly from that seed.
+- Existing results for a mutation context are moved to `<context>_previous_<timestamp>` before a rerun writes new results, preventing files from different runs from being mixed.
+- Importing SigProfilerExtractor no longer suppresses warnings globally or changes the host program's multiprocessing start method.
 
 ### Fixed
 - Added a lower bound (1e-16) to W, H and W @ H in the KL multiplicative updates, on CPU and GPU. A multiplicative update cannot move an entry away from exactly zero, so zeros from the NNDSVD initialization (about half of W and H) or from underflow stayed zero for the whole run. The fit could then stall and pass the convergence test early at a worse solution; with `nmf_init="nndsvd"` this could happen at the first allowed convergence check. Results and run times can change, including with the default random initialization.
 - Fixed the KL loss returning NaN when the matrix passed to NMF contains a zero (`0 * log 0`). The extraction pipeline raises every value to at least 1e-4 before NMF, so this affected only direct use of `nmf_cpu` and `nmf_gpu`.
 - If a cell of W @ H reached zero, the update produced inf or NaN that spread to all of W and H with no error. An NMF replicate whose W or H contains NaN or inf now raises `FloatingPointError` instead of entering clustering.
+- CPU extraction now runs the requested number of NMF replicates when `batch_size` is greater than 1. The setting only controls GPU batching.
+- Forwarded `nnls_add_penalty`, `nnls_remove_penalty`, `initial_remove_penalty`, and `collapse_to_SBS96` to SigProfilerAssignment.
+- Recomputed the signature-rank range for each mutation context so a context with fewer samples cannot narrow the range used by subsequent contexts.
+- Seeded the Gaussian mixture model used to choose the normalization cutoff, making it reproducible from `Seeds.txt`.
+- Stopped treating failed silhouette calculations as perfect stability. Rank one remains stable by convention; invalid higher-rank calculations now raise a clear error.
+- Removed two unused per-replicate arrays that could each consume several gigabytes for large mutation matrices.
+- Validated `matrix_normalization`. Accepted values are `"gmm"`, `"100X"`, `"log2"`, `"none"`, or a positive integer cutoff; unsupported values now raise `ValueError`.
+- Samples containing some missing values now raise a clear error instead of being dropped silently. Completely empty columns and samples with zero mutations are reported and removed.
+- Preserved input values as float64 throughout NMF when `precision="double"` is selected.
+- Labelled matrices with unrecognized channel counts as `CH<n>` instead of incorrectly labelling every such matrix as SBS.
+- Fixed loading `Seeds.txt` with current NumPy versions and added clear validation for a missing `Seed` column or more than one root seed.
+- A run now raises an error instead of reporting success when none of the requested mutation contexts can be analyzed.
+- Rounded exported NMF activities to the nearest integer instead of truncating them.
+- Made the `SV_Matrices` output location independent of whether a BEDPE input directory has a trailing slash.
+- Unified CPU and GPU per-replicate diagnostics so both paths calculate them from the matrix actually fitted by NMF.
 
 ## [1.2.7] - 2026-01-22
 
