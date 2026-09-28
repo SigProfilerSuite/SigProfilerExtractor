@@ -100,13 +100,21 @@ def parse_arguments_extractor(args: List[str], description: str) -> argparse.Nam
     parser.add_argument(
         "--seeds",
         default="random",
-        help="Seeds for reproducible resamples, file path or 'random' (default: 'random').",
+        help=(
+            "Root seed source for reproducible NMF resampling and initialization: "
+            "a path to a Seeds.txt file containing one root seed in the Seed "
+            "column, or 'random' (default: 'random')."
+        ),
     )
     parser.add_argument(
         "--batch_size",
         type=int,
         default=1,
-        help="Batch size is for GPU only and defines the number of NMF replicates to be performed by each CPU during parallel processing (default: 1).",
+        help=(
+            "Number of NMF replicates grouped into each GPU batch. GPU only; "
+            "replicates keep independent resampling and initialization generators, "
+            "sample totals, and convergence stopping points (default: 1)."
+        ),
     )
     parser.add_argument(
         "--cpu",
