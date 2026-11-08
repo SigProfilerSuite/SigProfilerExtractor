@@ -5,3 +5,4 @@ include SigProfilerExtractor/data/CSVInput/*
 include SigProfilerExtractor/data/MatObjInput/*
 include SigProfilerExtractor/data/ReferenceFiles/*
 include SigProfilerExtractor/controllers/*
+recursive-include SigProfilerExtractor/dashboard_assets *.html *.css *.js

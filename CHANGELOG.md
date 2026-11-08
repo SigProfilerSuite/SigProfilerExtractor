@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Generate a self-contained `reports.html` after extraction. The offline dashboard provides interactive overview, all-rank signatures, selected de novo and COSMIC solutions, sample activities, and per-rank statistics using SigProfilerPlotting's context-aware Plotly renderers.
+- Add the `make_dashboard` Python and CLI option (default: `True`) to disable dashboard generation when needed.
+
+### Changed
+- Require SigProfilerPlotting 1.5.0 or newer for its validated matrix loader and interactive rendering API.
+
 ## [1.5.0] - 2026-09-28
 
 ### Changed
