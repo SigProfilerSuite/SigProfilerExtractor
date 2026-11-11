@@ -91,7 +91,8 @@ Extracts mutational signatures from an array of samples.
 sigProfilerExtractor(input_type, out_put, input_data, reference_genome="GRCh37", opportunity_genome = "GRCh37", cosmic_version=3.6, context_type = "default", exome = False,
                          minimum_signatures=1, maximum_signatures=25, nmf_replicates=100, resample = True, batch_size=1, cpu=-1, gpu=False,
                          nmf_init="random", precision= "single", matrix_normalization= "gmm", seeds= "random", 
-                         min_nmf_iterations= 10000, max_nmf_iterations=1000000, nmf_test_conv= 10000, nmf_tolerance= 1e-15, get_all_signature_matrices= False)
+                         min_nmf_iterations= 10000, max_nmf_iterations=1000000, nmf_test_conv= 10000, nmf_tolerance= 1e-15,
+                         get_all_signature_matrices=False, make_dashboard=True)
 ```
 
 | Category | Parameter | Variable Type | Parameter Description |
@@ -135,7 +136,17 @@ sigProfilerExtractor(input_type, out_put, input_data, reference_genome="GRCh37",
 | **Others** |  |  |  | 
 |  | **get_all_signature_matrices** | Boolean | Write to output Ws and Hs from all the NMF iterations (default: `False`) |
 |  | **export_probabilities** | Boolean | Create the probability matrix (default: `True`). |
+|  | **make_dashboard** | Boolean | Create the self-contained interactive `reports.html` after all extraction and assignment steps complete (default: `True`). Set to `False` to skip dashboard generation. |
 |  | **volume** | String | Path to the volume for writing and loading reference genomes, plotting templates, and COSMIC signature plots (default: `None`). Environmental variables take precedence: `SIGPROFILERMATRIXGENERATOR_VOLUME`, `SIGPROFILERPLOTTING_VOLUME`, and `SIGPROFILERASSIGNMENT_VOLUME`. |
+
+For an existing completed output directory, generate or refresh the dashboard
+without rerunning extraction:
+
+```python
+from SigProfilerExtractor.dashboard import create_dashboard
+
+create_dashboard("results")
+```
     
 #### sigProfilerExtractor Example
 VCF Files as Input

@@ -236,6 +236,17 @@ def parse_arguments_extractor(args: List[str], description: str) -> argparse.Nam
         help="Generate decomposition plots (default: True).",
     )
     parser.add_argument(
+        "--make_dashboard",
+        type=str2bool,
+        nargs="?",
+        const=True,
+        default=True,
+        help=(
+            "Create a self-contained interactive reports.html after "
+            "the analysis completes (default: True)."
+        ),
+    )
+    parser.add_argument(
         "--collapse_to_SBS96",
         type=str2bool,
         nargs="?",
@@ -299,6 +310,7 @@ class CliController:
             allow_stability_drop=parsed_args.allow_stability_drop,
             cosmic_version=parsed_args.cosmic_version,
             make_decomposition_plots=parsed_args.make_decomposition_plots,
+            make_dashboard=parsed_args.make_dashboard,
             collapse_to_SBS96=parsed_args.collapse_to_SBS96,
             stop_after_extraction=parsed_args.stop_after_extraction,
             volume=parsed_args.volume,

@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{TITLE}}</title>
+  <link rel="icon" href="data:,">
+  <style>{{STYLES}}</style>
+  <script>{{PLOTLY_JS}}</script>
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="product">SigProfilerExtractor</p>
+      <h1 id="projectTitle">Results dashboard</h1>
+    </div>
+    <div class="run-meta" id="runMeta"></div>
+  </header>
+  <div class="workspace">
+    <aside class="sidebar">
+      <label class="field-label" for="contextSelect">Mutation context</label>
+      <select id="contextSelect"></select>
+      <nav class="tabs" aria-label="Dashboard views">
+        <button type="button" data-tab="overview" class="active">Overview</button>
+        <button type="button" data-tab="solutions">All solutions</button>
+        <button type="button" data-tab="selected">Selected solution</button>
+        <button type="button" data-tab="activities">Activities</button>
+        <button type="button" data-tab="statistics">Statistics</button>
+      </nav>
+      <div id="contextSummary" class="context-summary"></div>
+    </aside>
+    <main id="content" tabindex="-1"></main>
+  </div>
+  <dialog id="figureHelpDialog" class="help-dialog" aria-labelledby="figureHelpTitle">
+    <div class="help-dialog-head">
+      <h2 id="figureHelpTitle">Figure details</h2>
+      <button id="figureHelpClose" class="help-dialog-close" type="button" aria-label="Close figure details">X</button>
+    </div>
+    <div id="figureHelpBody" class="help-dialog-body"></div>
+  </dialog>
+  <script id="dashboardData" type="application/json">{{DASHBOARD_DATA}}</script>
+  <script>{{APP_JS}}</script>
+</body>
+</html>

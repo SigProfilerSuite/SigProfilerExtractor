@@ -349,6 +349,7 @@ def sigProfilerExtractor(
     clustering_distance="cosine",
     export_probabilities=True,
     make_decomposition_plots=True,
+    make_dashboard=True,
     stability=0.8,
     min_stability=0.2,
     combined_stability=1.0,
@@ -448,6 +449,8 @@ def sigProfilerExtractor(
     refit_denovo_signatures: Boolean, optional. Default is False. If True, then refit the denovo signatures with nnls.
 
     make_decomposition_plots: Boolean, optional. Defualt is True. If True, Denovo to Cosmic sigantures decompostion plots will be created as a part the results.
+
+    make_dashboard: Boolean, optional. Default is True. If True, create a self-contained reports.html after all requested mutation contexts and assignment steps complete.
 
 
     OTHERS:-
@@ -1271,6 +1274,23 @@ def sigProfilerExtractor(
         + " folder"
     )
     sysdata.close()
+
+    if make_dashboard:
+        try:
+            from SigProfilerExtractor.dashboard import create_dashboard
+
+            dashboard_path = create_dashboard(out_put)
+            dashboard_message = "Interactive results dashboard: {}".format(
+                dashboard_path
+            )
+            print("\n" + dashboard_message)
+            with open(out_put + "/JOB_METADATA.txt", "a") as sysdata:
+                sysdata.write("\n" + dashboard_message + "\n")
+        except Exception as exc:
+            dashboard_message = "Results dashboard could not be created: {}".format(exc)
+            print("\nWARNING: " + dashboard_message)
+            with open(out_put + "/JOB_METADATA.txt", "a") as sysdata:
+                sysdata.write("\nWARNING: " + dashboard_message + "\n")
 
     print(
         "\n\n \nYour Job Is Successfully Completed! Thank You For Using SigProfilerExtractor.\n "
