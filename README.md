@@ -12,8 +12,13 @@ and SigProfilerPlotting.
 
 Full documentation is available in `docs/` (rendered via MkDocs): https://sigprofilersuite.github.io/SigProfilerExtractor/
 
+## Interactive results dashboard
+
+Every completed extraction creates a self-contained `reports.html` dashboard for exploring rank selection, signature profiles, activities, selected solutions, and quality statistics. The report opens directly in a modern browser and keeps all result data offline; see the [interactive dashboard guide](https://sigprofilersuite.github.io/SigProfilerExtractor/interactive-dashboard.html) for details.
+
 # Table of contents
 - [Installation](#installation)
+- [Interactive results dashboard](#interactive-results-dashboard)
 - [Functions](#functions)
   - [importdata](#importdata)
   - [sigProfilerExtractor](#sigProfilerExtractor)
@@ -138,15 +143,6 @@ sigProfilerExtractor(input_type, out_put, input_data, reference_genome="GRCh37",
 |  | **export_probabilities** | Boolean | Create the probability matrix (default: `True`). |
 |  | **make_dashboard** | Boolean | Create the self-contained interactive `reports.html` after all extraction and assignment steps complete (default: `True`). Set to `False` to skip dashboard generation. |
 |  | **volume** | String | Path to the volume for writing and loading reference genomes, plotting templates, and COSMIC signature plots (default: `None`). Environmental variables take precedence: `SIGPROFILERMATRIXGENERATOR_VOLUME`, `SIGPROFILERPLOTTING_VOLUME`, and `SIGPROFILERASSIGNMENT_VOLUME`. |
-
-For an existing completed output directory, generate or refresh the dashboard
-without rerunning extraction:
-
-```python
-from SigProfilerExtractor.dashboard import create_dashboard
-
-create_dashboard("results")
-```
     
 #### sigProfilerExtractor Example
 VCF Files as Input

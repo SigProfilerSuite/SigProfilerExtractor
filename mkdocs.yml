@@ -40,6 +40,7 @@ nav:
       - '3. Using the Tool - Input': '3. Using the Tool - Input.md'
       - '4. Using the Tool - Output': '4. Using the Tool - Output.md'
   - Output:
+      - 'Interactive Dashboard': 'interactive-dashboard.md'
       - '5. Output - All Solutions': '5. Output - All Solutions.md'
       - '6. Output - Suggested Solution': '6. Output - Suggested Solution.md'
 
