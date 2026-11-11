@@ -82,6 +82,13 @@ class DashboardTest(unittest.TestCase):
         html = dashboard.read_text(encoding="utf-8")
         self.assertIn("SigProfilerExtractor", html)
         self.assertIn("All solutions", html)
+        self.assertIn('id="figureHelpDialog"', html)
+        self.assertIn("Explain this figure", html)
+        self.assertIn("Mutational signature profile", html)
+        self.assertIn("Burden: high to low", html)
+        self.assertIn("Matrix Frobenius error (%)", html)
+        self.assertIn("aria-sort", html)
+        self.assertIn("window.location.hash", html)
         self.assertNotRegex(html, r'<(?:script|link)[^>]+(?:src|href)="https?://')
 
         match = re.search(

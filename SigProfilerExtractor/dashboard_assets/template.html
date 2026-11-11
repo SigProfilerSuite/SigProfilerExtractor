@@ -31,6 +31,13 @@
     </aside>
     <main id="content" tabindex="-1"></main>
   </div>
+  <dialog id="figureHelpDialog" class="help-dialog" aria-labelledby="figureHelpTitle">
+    <div class="help-dialog-head">
+      <h2 id="figureHelpTitle">Figure details</h2>
+      <button id="figureHelpClose" class="help-dialog-close" type="button" aria-label="Close figure details">X</button>
+    </div>
+    <div id="figureHelpBody" class="help-dialog-body"></div>
+  </dialog>
   <script id="dashboardData" type="application/json">{{DASHBOARD_DATA}}</script>
   <script>{{APP_JS}}</script>
 </body>

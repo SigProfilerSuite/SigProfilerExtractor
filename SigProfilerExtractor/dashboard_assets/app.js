@@ -3,7 +3,67 @@
 const DATA = JSON.parse(document.getElementById('dashboardData').textContent);
 const $ = (id) => document.getElementById(id);
 const state = { context: 0, tab: 'overview', rank: null, bundle: 0 };
+const TABS = new Set(['overview', 'solutions', 'selected', 'activities', 'statistics']);
 const COLORS = ['#137c79', '#d95d4f', '#b78318', '#3276a8', '#7b5aa6', '#59834b', '#bd6d9c', '#6b747c'];
+const SIGNATURE_COLORS = ['#332288', '#117733', '#44aa99', '#88ccee', '#ddcc77', '#cc6677', '#aa4499', '#882255', '#999933', '#661100', '#6699cc', '#6b747c'];
+const FIGURE_HELP = {
+  solutionSelection: {
+    title: 'Solution selection',
+    description: 'Compares candidate NMF ranks so the selected solution balances reproducibility across replicates with reconstruction quality.',
+    sections: [
+      ['Axes and traces', 'The x-axis is the number of signatures (k). The upper panel shows average and minimum silhouette stability; values nearer 1 indicate more reproducible signatures across NMF replicates. The lower panel shows matrix Frobenius error on the left scale and mean cosine distance on the right scale; lower values indicate a closer reconstruction.'],
+      ['How to interpret it', 'The upper panel shows stability. The lower panel shows reconstruction metrics on explicitly labelled scales. Look for a stable rank before improvements in reconstruction become small. The selected rank is marked by the vertical reference line and highlighted in the table below. A low error alone is not sufficient if replicate stability is poor.'],
+    ],
+  },
+  sampleBurden: {
+    title: 'Sample mutation burden',
+    description: 'Shows the total number of mutations in each sample before those mutations are attributed to signatures.',
+    sections: [
+      ['Axes', 'Each x-axis label is a sample. Bar height is the sum of all mutation-channel counts for that sample, with samples ordered from highest to lowest burden.'],
+      ['How to interpret it', 'Use this view to identify low-burden samples and unusually large catalogues that may influence extraction. This is an input-size comparison, not a signature-activity plot.'],
+    ],
+  },
+  signatureProfile: {
+    title: 'Mutational signature profile',
+    description: 'Shows the mutation-channel probability distribution that defines the selected de novo or reference signature.',
+    sections: [
+      ['Axes and colors', 'The x-axis contains mutation channels for the active context. The y-axis is the relative contribution of each channel to this signature. Context-specific colors group related mutation classes. Values across a signature normally sum to approximately 1.'],
+      ['How to interpret it', 'Compare the shape and peaks of profiles to identify characteristic mutation patterns. Profile height does not show how often a signature occurs in a sample; use the Activities view for that. SBS4608 controls expose strand-bias and heatmap panels supplied by SigProfilerPlotting.'],
+    ],
+  },
+  activities: {
+    title: 'Signature activities',
+    description: 'Shows how many mutations in each sample are attributed to each extracted or fitted signature.',
+    sections: [
+      ['Stacked view', 'The x-axis contains samples and each colored segment is one signature. Total bar height is the mutations assigned in that sample. Percentage mode normalizes every sample to 100%, emphasizing composition instead of absolute burden.'],
+      ['Heatmap view', 'Columns are samples, rows are signatures, and color intensity represents activity. Log color applies log10(value + 1) to the color scale while hover labels retain the original values, making low activities visible without losing quantitative context.'],
+    ],
+  },
+  signatureStatistics: {
+    title: 'Signature statistics',
+    description: 'Summarizes rank-specific quality and burden measurements for each extracted signature.',
+    sections: [
+      ['How to read it', 'The x-axis contains signatures. Select one metric at a time so values with different units are never combined on one scale. Stability nearer 1 indicates more consistent recovery across replicates; total mutations describes signature burden.'],
+      ['How to interpret it', 'Hover for exact values and use the table for the complete output. Compare stability together with burden: a weak low-burden signature may be less robust than a stable pattern recovered consistently across replicates.'],
+    ],
+  },
+  sampleStatistics: {
+    title: 'Sample fit statistics',
+    description: 'Describes how closely the selected rank reconstructs each sample mutation catalogue.',
+    sections: [
+      ['How to read it', 'The x-axis contains samples. Select one fit metric at a time; the dashed reference line marks the cohort median. Cosine similarity and correlation nearer 1 indicate better agreement, while L1, L2, KL, and cosine distance values are errors or distances where lower is better.'],
+      ['How to interpret it', 'Samples that differ substantially from the median may have low mutation burden, unusual biology, or patterns not represented well by the extracted signatures. Use the table for exact values and other metrics.'],
+    ],
+  },
+  convergence: {
+    title: 'NMF replicate diagnostics',
+    description: 'Compares optimization outcomes across independent NMF replicates for the active rank.',
+    sections: [
+      ['How to read it', 'The x-axis identifies the replicate. Select one diagnostic at a time; the dashed reference line marks the replicate median. Lower KL divergence or reconstruction error indicates a closer fit, while higher correlation indicates better agreement. Convergence iterations show how long each replicate optimized.'],
+      ['How to interpret it', 'Tightly grouped replicate outcomes support a stable solution. Outlying errors, correlations, or iteration counts can indicate a replicate that converged to a different local solution.'],
+    ],
+  },
+};
 
 function node(tag, className, text) {
   const element = document.createElement(tag);
@@ -31,6 +91,54 @@ function format(value) {
     return Number.isInteger(value) ? String(value) : value.toLocaleString(undefined, { maximumFractionDigits: 5 });
   }
   return String(value);
+}
+
+function median(values) {
+  if (!values.length) return NaN;
+  const sorted = [...values].sort((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+function helpDetails(kind, source, description) {
+  const details = FIGURE_HELP[kind];
+  return { ...details, description: description || details.description, source };
+}
+
+function showFigureHelp(details, trigger) {
+  const dialog = $('figureHelpDialog');
+  const body = $('figureHelpBody');
+  $('figureHelpTitle').textContent = details.title;
+  body.replaceChildren(node('p', '', details.description));
+  details.sections.forEach(([title, text]) => {
+    const section = document.createElement('section');
+    section.append(node('h3', '', title), node('p', '', text));
+    body.append(section);
+  });
+  if (details.source) {
+    const source = node('div', 'help-source');
+    source.append(document.createTextNode('Data source: '), node('code', '', details.source));
+    body.append(source);
+  }
+  dialog._returnFocus = trigger;
+  if (typeof dialog.showModal === 'function') dialog.showModal();
+  else dialog.setAttribute('open', '');
+}
+
+function helpButton(details) {
+  const button = node('button', 'help-button', 'i');
+  button.type = 'button';
+  button.title = 'Explain this figure';
+  button.setAttribute('aria-label', `Explain ${details.title}`);
+  button.addEventListener('click', () => showFigureHelp(details, button));
+  return button;
+}
+
+function figureTitle(title, details) {
+  const wrap = node('div', 'figure-title');
+  wrap.append(node('h3', '', title));
+  if (details) wrap.append(helpButton(details));
+  return wrap;
 }
 
 function currentContext() { return DATA.contexts[state.context]; }
@@ -112,6 +220,7 @@ function renderTable(parent, table, options = {}) {
   const thead = document.createElement('thead');
   const headerRow = document.createElement('tr');
   const tbody = document.createElement('tbody');
+  const headers = [];
   let rows = table.rows.map((row, index) => ({ row, index }));
   let sortIndex = -1; let ascending = true;
 
@@ -127,19 +236,29 @@ function renderTable(parent, table, options = {}) {
       });
   }
 
+  function sortBy(index) {
+    ascending = sortIndex === index ? !ascending : true; sortIndex = index;
+    rows.sort((left, right) => {
+      const a = left.row[index]; const b = right.row[index];
+      const an = numeric(a); const bn = numeric(b);
+      const compared = Number.isNaN(an) || Number.isNaN(bn)
+        ? String(a ?? '').localeCompare(String(b ?? '')) : an - bn;
+      return ascending ? compared : -compared;
+    });
+    headers.forEach((header, headerIndex) => header.setAttribute(
+      'aria-sort', headerIndex === index ? (ascending ? 'ascending' : 'descending') : 'none',
+    ));
+    drawRows();
+  }
+
   table.columns.forEach((column, index) => {
     const th = node('th', '', column);
-    th.addEventListener('click', () => {
-      ascending = sortIndex === index ? !ascending : true; sortIndex = index;
-      rows.sort((left, right) => {
-        const a = left.row[index]; const b = right.row[index];
-        const an = numeric(a); const bn = numeric(b);
-        const compared = Number.isNaN(an) || Number.isNaN(bn)
-          ? String(a ?? '').localeCompare(String(b ?? '')) : an - bn;
-        return ascending ? compared : -compared;
-      });
-      drawRows();
+    th.tabIndex = 0; th.title = `Sort by ${column}`; th.setAttribute('aria-sort', 'none');
+    th.addEventListener('click', () => sortBy(index));
+    th.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); sortBy(index); }
     });
+    headers.push(th);
     headerRow.append(th);
   });
   thead.append(headerRow); tableElement.append(thead, tbody); wrap.append(tableElement);
@@ -197,7 +316,9 @@ function compactPlot(variant, toggles) {
 function renderProfileSection(parent, profile, title) {
   const section = node('section', 'section');
   const sectionHead = node('div', 'section-head');
-  const heading = node('div'); heading.append(node('h3', '', title));
+  const context = profile?.context || currentContext().name;
+  const description = `Shows the ${context} mutation-channel probability distribution that defines the selected signature.`;
+  const heading = figureTitle(title, helpDetails('signatureProfile', profile?.source, description));
   sectionHead.append(heading); section.append(sectionHead);
   if (!profile || !profile.names.length) { empty(section, 'No signature matrix is available for this result.'); parent.append(section); return; }
   const controls = node('div', 'toolbar');
@@ -246,22 +367,55 @@ function overallPlot(parent, context) {
   const traces = [];
   if (avg >= 0) traces.push({ type: 'scatter', mode: 'lines+markers', name: 'Average stability', x: rank, y: table.rows.map((row) => numeric(row[avg])), line: { color: COLORS[0], width: 3 } });
   if (min >= 0) traces.push({ type: 'scatter', mode: 'lines+markers', name: 'Minimum stability', x: rank, y: table.rows.map((row) => numeric(row[min])), line: { color: COLORS[1], width: 2 } });
-  if (frob >= 0) traces.push({ type: 'scatter', mode: 'lines+markers', name: 'Frobenius error', x: rank, y: table.rows.map((row) => numeric(row[frob])), yaxis: 'y2', line: { color: COLORS[2], dash: 'dot' } });
-  if (cosine >= 0) traces.push({ type: 'scatter', mode: 'lines+markers', name: 'Mean cosine distance', x: rank, y: table.rows.map((row) => numeric(row[cosine])), yaxis: 'y2', line: { color: COLORS[3], dash: 'dash' } });
+  if (frob >= 0) traces.push({ type: 'scatter', mode: 'lines+markers', name: 'Frobenius error', x: rank, y: table.rows.map((row) => numeric(row[frob])), xaxis: 'x2', yaxis: 'y2', line: { color: COLORS[2], dash: 'dot' } });
+  if (cosine >= 0) traces.push({ type: 'scatter', mode: 'lines+markers', name: 'Mean cosine distance', x: rank, y: table.rows.map((row) => numeric(row[cosine])), xaxis: 'x2', yaxis: 'y3', line: { color: COLORS[3], dash: 'dash' } });
   const element = node('div', 'plot'); parent.append(element);
+  const selectedRank = context.selected_rank;
+  const reference = Number.isFinite(selectedRank) ? {
+    shapes: [{ type: 'line', xref: 'x2', yref: 'paper', x0: selectedRank, x1: selectedRank, y0: 0, y1: 1, line: { color: '#59656e', width: 1.5, dash: 'dot' } }],
+    annotations: [{ xref: 'x2', yref: 'paper', x: selectedRank, y: 1.03, text: `Selected k=${selectedRank}`, showarrow: false, font: { size: 11, color: '#43515a' }, bgcolor: '#ffffff' }],
+  } : { shapes: [], annotations: [] };
   plot(element, traces, {
-    height: 430, hovermode: 'x unified', legend: { orientation: 'h', y: 1.12 },
-    xaxis: { title: 'Number of signatures', dtick: 1, gridcolor: '#edf0f2' },
-    yaxis: { title: 'Stability', range: [-1, 1.05], gridcolor: '#edf0f2' },
-    yaxis2: { title: 'Reconstruction metric', overlaying: 'y', side: 'right', rangemode: 'tozero' },
+    height: 560, hovermode: 'x unified', hoversubplots: 'axis', legend: { orientation: 'h', y: 1.12 },
+    margin: { l: 68, r: 70, t: 72, b: 58 },
+    xaxis: { domain: [0, 1], anchor: 'y', matches: 'x2', showticklabels: false, dtick: 1, gridcolor: '#edf0f2' },
+    yaxis: { domain: [0.57, 1], title: 'Stability', range: [-1, 1.05], gridcolor: '#edf0f2', zerolinecolor: '#aeb8be' },
+    xaxis2: { domain: [0, 1], anchor: 'y2', title: 'Number of signatures (k)', dtick: 1, gridcolor: '#edf0f2' },
+    yaxis2: { domain: [0, 0.39], title: 'Matrix Frobenius error (%)', rangemode: 'tozero', gridcolor: '#edf0f2' },
+    yaxis3: { domain: [0, 0.39], title: 'Mean cosine distance', overlaying: 'y2', side: 'right', rangemode: 'tozero', showgrid: false },
+    shapes: reference.shapes, annotations: reference.annotations,
   });
 }
 
-function activityValues(table, query, normalized) {
+function selectedEvidence(context) {
+  const table = context.overall_stats;
+  if (!table || !table.rows.length || !context.selected_rank) return null;
+  const row = table.rows.find((candidate) => numeric(candidate[0]) === context.selected_rank);
+  if (!row) return null;
+  const metrics = [
+    ['Average stability', columnIndex(table, [/Stability \(Avg/i, /avg.*stability/i])],
+    ['Minimum stability', columnIndex(table, [/Minimum Stability/i])],
+    ['Frobenius error', columnIndex(table, [/Frobenius/i])],
+    ['Mean cosine distance', columnIndex(table, [/Mean Cosine Distance/i])],
+  ].filter(([, index]) => index >= 0);
+  const wrap = node('dl', 'selection-evidence');
+  metrics.forEach(([label, index]) => {
+    const item = node('div');
+    item.append(node('dt', '', label), node('dd', '', format(row[index])));
+    wrap.append(item);
+  });
+  return wrap;
+}
+
+function activityValues(table, query, normalized, order) {
   const names = table.columns.slice(1);
-  const rows = table.rows.filter((row) => !query || String(row[0]).toLowerCase().includes(query));
-  const samples = rows.map((row) => String(row[0]));
-  const values = names.map((_, index) => rows.map((row) => Number(row[index + 1]) || 0));
+  const rows = table.rows.filter((row) => !query || String(row[0]).toLowerCase().includes(query)).map((row) => ({
+    row, total: row.slice(1).reduce((sum, value) => sum + (Number(value) || 0), 0),
+  }));
+  if (order === 'burden') rows.sort((left, right) => right.total - left.total);
+  if (order === 'name') rows.sort((left, right) => String(left.row[0]).localeCompare(String(right.row[0])));
+  const samples = rows.map(({ row }) => String(row[0]));
+  const values = names.map((_, index) => rows.map(({ row }) => Number(row[index + 1]) || 0));
   if (normalized) {
     samples.forEach((_, sampleIndex) => {
       const total = values.reduce((sum, signature) => sum + signature[sampleIndex], 0);
@@ -273,31 +427,41 @@ function activityValues(table, query, normalized) {
 
 function renderActivitiesBlock(parent, table, title) {
   const section = node('section', 'section');
-  const sectionHead = node('div', 'section-head'); const heading = node('div'); heading.append(node('h3', '', title));
+  const sectionHead = node('div', 'section-head');
+  const heading = figureTitle(title, helpDetails('activities', table?.source));
   sectionHead.append(heading); section.append(sectionHead);
   if (!table || table.columns.length < 2) { empty(section, 'No activity matrix is available for this result.'); parent.append(section); return; }
   const controls = node('div', 'toolbar');
   const search = document.createElement('input'); search.type = 'search'; search.placeholder = 'Filter samples'; search.setAttribute('aria-label', 'Filter samples');
+  const order = document.createElement('select'); order.setAttribute('aria-label', 'Sample order'); order.title = 'Sample order';
+  [['input', 'Input order'], ['burden', 'Burden: high to low'], ['name', 'Sample name']].forEach(([value, label]) => {
+    const option = node('option', '', label); option.value = value; order.append(option);
+  });
   const mode = node('div', 'segment');
   const stacked = node('button', 'active', 'Stacked'); const heatmap = node('button', '', 'Heatmap');
   stacked.type = heatmap.type = 'button'; mode.append(stacked, heatmap);
   const normalizeLabel = document.createElement('label'); const normalize = document.createElement('input'); normalize.type = 'checkbox';
   normalizeLabel.append(normalize, document.createTextNode(' Percentage'));
-  controls.append(search, mode, normalizeLabel); sectionHead.append(controls);
+  const logLabel = document.createElement('label'); logLabel.className = 'hidden'; const logColor = document.createElement('input'); logColor.type = 'checkbox';
+  logLabel.append(logColor, document.createTextNode(' Log color'));
+  controls.append(search, order, mode, normalizeLabel, logLabel); sectionHead.append(controls);
   const plotElement = node('div', 'plot'); section.append(plotElement);
   let view = 'stacked';
   function draw() {
-    const data = activityValues(table, search.value.trim().toLowerCase(), normalize.checked);
+    const data = activityValues(table, search.value.trim().toLowerCase(), normalize.checked, order.value);
+    logLabel.classList.toggle('hidden', view !== 'heatmap');
     if (view === 'stacked') {
-      const traces = data.names.map((name, index) => ({ type: 'bar', name, x: data.samples, y: data.values[index], marker: { color: COLORS[index % COLORS.length] }, hovertemplate: `${name}<br>%{x}: %{y:.4g}<extra></extra>` }));
+      const traces = data.names.map((name, index) => ({ type: 'bar', name, x: data.samples, y: data.values[index], marker: { color: SIGNATURE_COLORS[index % SIGNATURE_COLORS.length] }, hovertemplate: `${name}<br>%{x}: %{y:.4g}<extra></extra>` }));
       plot(plotElement, traces, { height: 450, barmode: 'stack', xaxis: { title: 'Sample', tickangle: -55, automargin: true }, yaxis: { title: normalize.checked ? 'Activity (%)' : 'Mutations', rangemode: 'tozero' }, legend: { orientation: 'h', y: 1.13 } });
     } else {
-      plot(plotElement, [{ type: 'heatmap', x: data.samples, y: data.names, z: data.values, colorscale: 'Viridis', colorbar: { title: normalize.checked ? '%' : 'Activity' }, hovertemplate: '%{y}<br>%{x}: %{z:.4g}<extra></extra>' }], { height: Math.max(380, 34 * data.names.length), xaxis: { title: 'Sample', tickangle: -55, automargin: true }, yaxis: { title: 'Signature', automargin: true } });
+      const displayValues = logColor.checked ? data.values.map((row) => row.map((value) => Math.log10(value + 1))) : data.values;
+      const colorTitle = logColor.checked ? `log10(${normalize.checked ? '% + 1' : 'activity + 1'})` : (normalize.checked ? '%' : 'Activity');
+      plot(plotElement, [{ type: 'heatmap', x: data.samples, y: data.names, z: displayValues, customdata: data.values, colorscale: 'Cividis', colorbar: { title: colorTitle }, hovertemplate: '%{y}<br>%{x}: %{customdata:.4g}<extra></extra>' }], { height: Math.max(380, 34 * data.names.length), xaxis: { title: 'Sample', tickangle: -55, automargin: true }, yaxis: { title: 'Signature', automargin: true } });
     }
   }
   stacked.addEventListener('click', () => { view = 'stacked'; stacked.classList.add('active'); heatmap.classList.remove('active'); draw(); });
   heatmap.addEventListener('click', () => { view = 'heatmap'; heatmap.classList.add('active'); stacked.classList.remove('active'); draw(); });
-  search.addEventListener('input', draw); normalize.addEventListener('change', draw); draw();
+  search.addEventListener('input', draw); order.addEventListener('change', draw); normalize.addEventListener('change', draw); logColor.addEventListener('change', draw); draw();
   const tableSection = node('details'); const summary = node('summary', '', 'Activity matrix'); tableSection.append(summary);
   const tableBody = node('div'); renderTable(tableBody, table, { filename: table.source || 'activities.csv' }); tableSection.append(tableBody); section.append(tableSection);
   parent.append(section);
@@ -305,16 +469,22 @@ function renderActivitiesBlock(parent, table, title) {
 
 function renderOverview(content, context) {
   content.append(header('Overview', `${context.name} extraction and solution selection`));
+  const burdens = context.sample_summary.totals.map((item) => item.mutations).filter(Number.isFinite);
   kpis(content, [
     ['Selected rank', context.selected_rank ? `k=${context.selected_rank}` : '—'],
     ['Ranks evaluated', context.solutions.length],
     ['Samples', context.sample_summary.samples],
     ['Mutation channels', context.sample_summary.channels],
+    ['Total mutations', burdens.length ? burdens.reduce((sum, value) => sum + value, 0) : '—'],
+    ['Median per sample', burdens.length ? median(burdens) : '—'],
   ]);
-  const selection = node('section', 'section'); selection.append(node('h3', '', 'Solution selection'));
+  const selection = node('section', 'section');
+  selection.append(figureTitle('Solution selection', helpDetails('solutionSelection', context.overall_stats?.source)));
+  const evidence = selectedEvidence(context); if (evidence) selection.append(evidence);
   overallPlot(selection, context); renderTable(selection, context.overall_stats, { filename: `${context.name}_all_solutions.csv`, selectedRank: context.selected_rank }); content.append(selection);
   if (context.sample_summary.totals.length) {
-    const burden = node('section', 'section'); burden.append(node('h3', '', 'Sample mutation burden'));
+    const burden = node('section', 'section');
+    burden.append(figureTitle('Sample mutation burden', helpDetails('sampleBurden', `${context.source}/Samples.txt`)));
     const plotElement = node('div', 'plot compact'); burden.append(plotElement);
     const sorted = [...context.sample_summary.totals].sort((a, b) => b.mutations - a.mutations);
     plot(plotElement, [{ type: 'bar', x: sorted.map((item) => item.sample), y: sorted.map((item) => item.mutations), marker: { color: '#3276a8' }, hovertemplate: '%{x}: %{y:,.0f}<extra></extra>' }], { height: 360, xaxis: { tickangle: -55, automargin: true }, yaxis: { title: 'Mutations', rangemode: 'tozero' } });
@@ -367,14 +537,39 @@ function renderActivities(content, context) {
   renderActivitiesBlock(content, solution.activities, `Activities at k=${solution.rank}`);
 }
 
-function statsPlot(parent, table, title) {
+function statsPlot(parent, table, options) {
   if (!table || !table.rows.length) return;
   const first = table.columns[0]; const x = table.rows.map((row) => row[0]);
   const numericColumns = table.columns.slice(1).map((name, offset) => ({ name, index: offset + 1 })).filter(({ index }) => table.rows.some((row) => !Number.isNaN(numeric(row[index]))));
   if (!numericColumns.length) return;
-  const traces = numericColumns.slice(0, 4).map(({ name, index }, traceIndex) => ({ type: 'scatter', mode: 'markers+lines', name, x, y: table.rows.map((row) => numeric(row[index])), marker: { color: COLORS[traceIndex % COLORS.length] } }));
+  const preferred = numericColumns.find(({ name }) => (options.preferred || []).some((pattern) => pattern.test(name))) || numericColumns[0];
+  const controls = node('div', 'plot-tools');
+  const metric = document.createElement('select'); metric.setAttribute('aria-label', `${options.label} metric`);
+  numericColumns.forEach(({ name, index }) => { const option = node('option', '', name); option.value = String(index); option.selected = index === preferred.index; metric.append(option); });
+  controls.append(metric); parent.append(controls);
   const element = node('div', 'plot compact'); parent.append(element);
-  plot(element, traces, { height: 360, title: { text: title, x: 0.01 }, xaxis: { title: first, tickangle: -45, automargin: true }, yaxis: { rangemode: 'tozero' }, legend: { orientation: 'h', y: 1.13 } });
+  function draw() {
+    const index = Number(metric.value);
+    const name = table.columns[index];
+    const values = table.rows.map((row) => numeric(row[index]));
+    const finite = values.filter(Number.isFinite);
+    const middle = median(finite);
+    const isPercentage = /%/.test(name);
+    const isBounded = /stability|similarity|correlation/i.test(name) && finite.every((value) => value >= -1 && value <= 1);
+    const trace = options.kind === 'bar'
+      ? { type: 'bar', x, y: values, marker: { color: options.color }, hovertemplate: `%{x}<br>${name}: %{y:.5g}${isPercentage ? '%' : ''}<extra></extra>` }
+      : { type: 'scatter', mode: options.kind === 'line' ? 'lines+markers' : 'markers', x, y: values, marker: { color: options.color, size: 7 }, line: { color: options.color, width: 1.5 }, hovertemplate: `%{x}<br>${name}: %{y:.5g}${isPercentage ? '%' : ''}<extra></extra>` };
+    const showMedian = Number.isFinite(middle) && finite.length > 1;
+    plot(element, [trace], {
+      height: 360,
+      margin: { l: 65, r: 25, t: 28, b: 80 },
+      xaxis: { title: first, tickangle: -45, automargin: true, nticks: x.length > 12 ? 12 : undefined },
+      yaxis: { title: name, ticksuffix: isPercentage ? '%' : '', range: isBounded ? (finite.every((value) => value >= 0) ? [0, 1.05] : [-1.05, 1.05]) : undefined, rangemode: isBounded ? undefined : 'tozero' },
+      shapes: showMedian ? [{ type: 'line', xref: 'paper', yref: 'y', x0: 0, x1: 1, y0: middle, y1: middle, line: { color: '#6b747c', width: 1.5, dash: 'dash' } }] : [],
+      annotations: showMedian ? [{ xref: 'paper', yref: 'y', x: 1, y: middle, text: `Median ${format(middle)}`, showarrow: false, xanchor: 'right', yshift: 10, font: { size: 10, color: '#56616a' }, bgcolor: '#ffffff' }] : [],
+    });
+  }
+  metric.addEventListener('change', draw); draw();
 }
 
 function renderStatistics(content) {
@@ -382,10 +577,20 @@ function renderStatistics(content) {
   rankStrip(content); const solution = currentSolution();
   if (!solution) { empty(content, 'No statistics were found.'); return; }
   const grid = node('div', 'split');
-  const signature = node('section', 'section'); signature.append(node('h3', '', 'Signature statistics')); statsPlot(signature, solution.signature_stats, 'Signature stability and burden'); renderTable(signature, solution.signature_stats, { filename: `k${solution.rank}_signature_stats.csv` });
-  const sample = node('section', 'section'); sample.append(node('h3', '', 'Sample fit statistics')); statsPlot(sample, solution.sample_stats, 'Sample fit metrics'); renderTable(sample, solution.sample_stats, { filename: `k${solution.rank}_sample_stats.csv` });
+  const signature = node('section', 'section');
+  signature.append(figureTitle('Signature statistics', helpDetails('signatureStatistics', solution.signature_stats?.source)));
+  statsPlot(signature, solution.signature_stats, { label: 'Signature statistics', preferred: [/^Stability$/i], kind: 'bar', color: COLORS[0] });
+  renderTable(signature, solution.signature_stats, { filename: `k${solution.rank}_signature_stats.csv` });
+  const sample = node('section', 'section');
+  sample.append(figureTitle('Sample fit statistics', helpDetails('sampleStatistics', solution.sample_stats?.source)));
+  statsPlot(sample, solution.sample_stats, { label: 'Sample fit statistics', preferred: [/Cosine Similarity/i, /Correlation/i], kind: 'markers', color: COLORS[3] });
+  renderTable(sample, solution.sample_stats, { filename: `k${solution.rank}_sample_stats.csv` });
   grid.append(signature, sample); content.append(grid);
-  const convergence = node('section', 'section'); convergence.append(node('h3', '', 'NMF replicate diagnostics')); statsPlot(convergence, solution.convergence, 'Convergence diagnostics'); renderTable(convergence, solution.convergence, { filename: `k${solution.rank}_convergence.csv` }); content.append(convergence);
+  const convergence = node('section', 'section');
+  convergence.append(figureTitle('NMF replicate diagnostics', helpDetails('convergence', solution.convergence?.source)));
+  statsPlot(convergence, solution.convergence, { label: 'NMF replicate diagnostics', preferred: [/KL Divergence/i], kind: 'line', color: COLORS[1] });
+  renderTable(convergence, solution.convergence, { filename: `k${solution.rank}_convergence.csv` });
+  content.append(convergence);
 }
 
 function render() {
@@ -398,12 +603,26 @@ function render() {
 }
 
 function init() {
+  const initialTab = window.location.hash.slice(1);
+  if (TABS.has(initialTab)) state.tab = initialTab;
   $('projectTitle').textContent = DATA.project;
   $('runMeta').textContent = `Extractor ${DATA.extractor_version} · Plotting ${DATA.plotting_version}\n${new Date(DATA.generated_at).toLocaleString()}`;
   const select = $('contextSelect');
+  const helpDialog = $('figureHelpDialog');
+  $('figureHelpClose').addEventListener('click', () => helpDialog.close());
+  helpDialog.addEventListener('click', (event) => { if (event.target === helpDialog) helpDialog.close(); });
+  helpDialog.addEventListener('close', () => helpDialog._returnFocus?.focus());
   DATA.contexts.forEach((context, index) => { const option = node('option', '', context.name); option.value = String(index); select.append(option); });
   select.addEventListener('change', () => { state.context = Number(select.value); state.rank = null; state.bundle = 0; render(); });
-  document.querySelectorAll('.tabs button').forEach((button) => button.addEventListener('click', () => { state.tab = button.dataset.tab; render(); }));
+  document.querySelectorAll('.tabs button').forEach((button) => button.addEventListener('click', () => {
+    const next = button.dataset.tab;
+    if (window.location.hash === `#${next}`) { state.tab = next; render(); }
+    else window.location.hash = next;
+  }));
+  window.addEventListener('hashchange', () => {
+    const next = window.location.hash.slice(1);
+    if (TABS.has(next)) { state.tab = next; render(); }
+  });
   if (!window.Plotly) { $('content').append(node('div', 'notice', 'Plotly could not be loaded from this dashboard file.')); return; }
   render();
 }
