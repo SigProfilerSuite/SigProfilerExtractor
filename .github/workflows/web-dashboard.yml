@@ -112,6 +112,14 @@ jobs:
           findstr /C:"Dependencies already installed; skipping install." second-run.log >nul || exit /b 1
           launch_web.bat --stop
 
+      # On Windows, os.kill(pid, 0) sends Ctrl+C to the whole console instead
+      # of checking the pid; these tests fail if any process check does that.
+      - name: Checking on processes sends no Ctrl+C
+        shell: cmd
+        run: |
+          .venv-dashboard\Scripts\python.exe -m pip install --quiet pytest
+          .venv-dashboard\Scripts\python.exe -m pytest tests\web\test_process_liveness.py -v -p no:cacheprovider
+
       - name: The clickable uninstaller removes the environment
         shell: cmd
         run: |

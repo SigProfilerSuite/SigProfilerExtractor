@@ -115,6 +115,16 @@ def _write_pidfile_atomic(pidfile: Path, pid: int, port: int, token: str) -> Non
 
 
 def _is_process_alive(pid: int) -> bool:
+    """Whether a process with this pid is still running.
+
+    Not os.kill(pid, 0) on Windows: there, signal 0 is CTRL_C_EVENT, so the
+    call sends Ctrl+C to every process on this console (the caller included)
+    instead of probing the pid.
+    """
+    if pid <= 0:
+        return False
+    if sys.platform == "win32":
+        return _windows_process_alive(pid)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -122,6 +132,33 @@ def _is_process_alive(pid: int) -> bool:
     except PermissionError:
         return True
     return True
+
+
+def _windows_process_alive(pid: int) -> bool:
+    import ctypes
+    from ctypes import wintypes
+
+    synchronize, query_limited_information = 0x00100000, 0x1000
+    error_access_denied, wait_timeout = 5, 0x102
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+    kernel32.WaitForSingleObject.restype = wintypes.DWORD
+    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    kernel32.CloseHandle.restype = wintypes.BOOL
+
+    handle = kernel32.OpenProcess(synchronize | query_limited_information, False, pid)
+    if not handle:
+        # Access denied: the process exists but belongs to someone else.
+        return ctypes.get_last_error() == error_access_denied
+    try:
+        # A process that has exited is signalled, even while a handle to it
+        # (such as a Popen's) keeps its pid from being reused.
+        return kernel32.WaitForSingleObject(handle, 0) == wait_timeout
+    finally:
+        kernel32.CloseHandle(handle)
 
 
 def _fetch_identity(port: int, timeout: float = 1.0) -> dict | None:

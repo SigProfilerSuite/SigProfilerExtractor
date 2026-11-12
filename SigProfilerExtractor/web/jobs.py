@@ -42,14 +42,33 @@ def _read_json(path: Path) -> dict | None:
         return None
 
 
+def _job_env() -> dict:
+    # Output written to a file, not a console, uses the locale's encoding:
+    # on Windows that is a code page such as cp1252, which cannot encode the
+    # block-character progress bars SigProfilerAssignment draws, and the run
+    # fails with UnicodeEncodeError. The variable reaches every worker process.
+    return {**os.environ, "PYTHONIOENCODING": "utf-8"}
+
+
+def _complete_utf8(chunk: bytes) -> int:
+    """Length of the chunk without a UTF-8 character still being written."""
+    for back in range(1, min(4, len(chunk)) + 1):
+        byte = chunk[-back]
+        if byte & 0xC0 == 0x80:  # a continuation byte: look further back
+            continue
+        if byte >= 0xC0:  # the lead byte of a multi-byte character
+            needed = 2 if byte < 0xE0 else 3 if byte < 0xF0 else 4
+            if back < needed:
+                return len(chunk) - back
+        break
+    return len(chunk)
+
+
 def _is_alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
+    # The launcher's check, which knows os.kill(pid, 0) sends Ctrl+C on Windows.
+    from .launcher import _is_process_alive
+
+    return _is_process_alive(pid)
 
 
 def _popen_kwargs() -> dict:
@@ -150,6 +169,7 @@ class JobManager:
                 stdout=log_handle,
                 stderr=subprocess.STDOUT,
                 cwd=str(cwd) if cwd else None,
+                env=_job_env(),
                 **_popen_kwargs(),
             )
         self._processes[job_id] = process
@@ -217,6 +237,9 @@ class JobManager:
         with open(log_path, "rb") as handle:
             handle.seek(offset)
             chunk = handle.read()
+        # Progress bars are multi-byte characters: leave one that is only
+        # partly written for the next read instead of garbling it.
+        chunk = chunk[:_complete_utf8(chunk)]
         return {
             "text": chunk.decode("utf-8", errors="replace"),
             "offset": offset + len(chunk),
