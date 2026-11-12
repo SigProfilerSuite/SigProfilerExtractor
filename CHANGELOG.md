@@ -7,6 +7,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-11-11
+
+### Changed
+- The Workbench launcher installs its dependencies with [uv](https://docs.astral.sh/uv/) when it can: the `uv` on PATH, or uv added to the Workbench's own environment. On a Mac this cut a first install from 95 s to 59 s and a reinstall from 45 s to 4 s. It falls back to pip if uv cannot be added or cannot install; set `SPE_WEB_INSTALLER=pip` to always use pip.
+
+### Fixed
+- Workbench runs on Windows no longer fail with `UnicodeEncodeError` when SigProfilerAssignment draws its progress bars. Output written to a file used the Windows code page (such as cp1252), which has no block characters; each run now writes its output as UTF-8.
+- The Workbench's run log on Windows shows its lines. Lines ending in `\r\n` were taken for progress-bar redraws and shown blank.
+- Checking whether a process is still running no longer sends Ctrl+C to the console on Windows, where `os.kill(pid, 0)` sends `CTRL_C_EVENT`. This could interrupt `launch_web.bat --stop`.
+- The run log no longer garbles a character that is split between two reads of the log.
+
 ## [1.6.0] - 2026-11-11
 
 ### Added
