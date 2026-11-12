@@ -1123,9 +1123,10 @@ function appendLog(text) {
   const log = $('jobLog');
   const lines = (state.logTail + text).split('\n');
   state.logTail = lines.pop();
-  // SigProfilerAssignment draws progress bars with carriage returns.
+  // SigProfilerAssignment draws progress bars with carriage returns: keep
+  // what follows the last one. A line ending in \r\n (Windows) is not one.
   lines.forEach((raw) => {
-    const line = raw.split('\r').pop();
+    const line = raw.replace(/\r$/, '').split('\r').pop();
     let node;
     if (line.startsWith('== ')) node = el('span', 'step-line', line);
     else if (/Traceback|Error|error:/.test(line)) node = el('span', 'err-line', line);

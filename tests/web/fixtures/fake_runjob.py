@@ -2,7 +2,10 @@
 real SigProfilerExtractor.web.runjob: read a config JSON path from
 argv[1], print progress, write result.json next to it.
 
-config keys: "outcome" ("done" | "failed" | "hang"), "sleep_seconds".
+config keys: "outcome" ("done" | "failed" | "hang"), "sleep_seconds",
+"print" (text written to the log as is, like a real run's output).
+The FAKE_RUNJOB_PRINT environment variable does the same for runs started
+from the page.
 The FAKE_RUNJOB_RESULT environment variable, a JSON object, replaces the
 result outright (for runs started from the page, whose config the test does
 not write).
@@ -23,6 +26,9 @@ def main(argv: list[str]) -> int:
     result_path = config_path.with_name("result.json")
 
     print("== step 1/1: working", flush=True)
+    text = config.get("print", os.environ.get("FAKE_RUNJOB_PRINT"))
+    if text:
+        print(text, end="", flush=True)
     time.sleep(config.get("sleep_seconds", 0))
 
     outcome = config.get("outcome", "done")

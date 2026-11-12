@@ -202,3 +202,98 @@ def test_second_launch_refuses_to_start_a_duplicate(tmp_path):
         if first.poll() is None:
             first.kill()
             first.wait(timeout=5)
+
+
+# ------------------------------------------------------- installing with uv
+
+
+class _Runs:
+    """Records install commands instead of running them; fails the ones asked."""
+
+    def __init__(self, fail=()):
+        self.commands, self.fail = [], fail
+
+    def __call__(self, command, check=False):
+        self.commands.append(command)
+        failed = any(word in command for word in self.fail)
+        if failed and check:
+            raise subprocess.CalledProcessError(1, command)
+        return subprocess.CompletedProcess(command, 1 if failed else 0)
+
+
+@pytest.fixture
+def install_env(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "setup.py").write_text("x")
+    fingerprint = tmp_path / ".fingerprint"
+    monkeypatch.setattr(launcher, "_fingerprint_path", lambda: fingerprint)
+    monkeypatch.delenv("SPE_WEB_INSTALLER", raising=False)
+    return repo, fingerprint
+
+
+def _install(monkeypatch, repo, runs, uv_on_path=None):
+    monkeypatch.setattr(launcher.subprocess, "run", runs)
+    monkeypatch.setattr(launcher.shutil, "which", lambda name: uv_on_path if name == "uv" else None)
+    launcher.ensure_dependencies(repo, force=True)
+
+
+def test_installs_with_the_uv_already_on_path(install_env, monkeypatch):
+    repo, fingerprint = install_env
+    runs = _Runs()
+    _install(monkeypatch, repo, runs, uv_on_path="/opt/bin/uv")
+    assert runs.commands == [["/opt/bin/uv", "pip", "install", "--python", sys.executable, "-e", str(repo)]]
+    assert fingerprint.read_text() == launcher.compute_fingerprint(repo)
+
+
+def test_adds_uv_to_the_environment_when_it_is_not_on_path(install_env, monkeypatch):
+    repo, _ = install_env
+    runs = _Runs()
+    _install(monkeypatch, repo, runs)
+    add_uv, install = runs.commands
+    assert add_uv[:4] == [sys.executable, "-m", "pip", "install"] and add_uv[-1] == "uv"
+    assert install == [sys.executable, "-m", "uv", "pip", "install", "--python", sys.executable, "-e", str(repo)]
+
+
+def test_falls_back_to_pip_when_uv_cannot_be_added(install_env, monkeypatch):
+    repo, fingerprint = install_env
+    runs = _Runs(fail=("uv",))
+    _install(monkeypatch, repo, runs)
+    assert runs.commands[-1] == [sys.executable, "-m", "pip", "install", "--quiet", "-e", str(repo)]
+    assert fingerprint.is_file()
+
+
+def test_falls_back_to_pip_when_uv_cannot_install(install_env, monkeypatch, capsys):
+    repo, fingerprint = install_env
+    runs = _Runs(fail=("--python",))
+    _install(monkeypatch, repo, runs, uv_on_path="/opt/bin/uv")
+    assert [c[0] for c in runs.commands] == ["/opt/bin/uv", sys.executable]
+    assert runs.commands[-1][1:4] == ["-m", "pip", "install"]
+    assert "trying pip instead" in capsys.readouterr().out
+    assert fingerprint.is_file()
+
+
+def test_spe_web_installer_pip_skips_uv(install_env, monkeypatch):
+    repo, _ = install_env
+    monkeypatch.setenv("SPE_WEB_INSTALLER", "pip")
+    runs = _Runs()
+    _install(monkeypatch, repo, runs, uv_on_path="/opt/bin/uv")
+    assert runs.commands == [[sys.executable, "-m", "pip", "install", "--quiet", "-e", str(repo)]]
+
+
+def test_a_failed_install_leaves_no_fingerprint(install_env, monkeypatch):
+    repo, fingerprint = install_env
+    runs = _Runs(fail=("-e",))
+    with pytest.raises(subprocess.CalledProcessError):
+        _install(monkeypatch, repo, runs, uv_on_path="/opt/bin/uv")
+    assert not fingerprint.exists()
+
+
+def test_no_install_when_the_fingerprint_matches(install_env, monkeypatch, capsys):
+    repo, fingerprint = install_env
+    fingerprint.write_text(launcher.compute_fingerprint(repo))
+    runs = _Runs()
+    monkeypatch.setattr(launcher.subprocess, "run", runs)
+    launcher.ensure_dependencies(repo)
+    assert runs.commands == []
+    assert "skipping install" in capsys.readouterr().out

@@ -286,6 +286,21 @@ def move_previous_results(directory):
     return target
 
 
+def input_project_name(input_data, path=os.path):
+    """The name of the input folder or file, used in output file names.
+
+    Splits with the platform's own path rules: a Windows path such as
+    C:\\data\\vcfs has no "/" to split on, and its full text, with a ":",
+    is not a valid file name. A trailing separator is ignored. Input that is
+    not a path (a DataFrame) is named "Input from DataFrame".
+    """
+    if isinstance(input_data, (str, os.PathLike)):
+        text = os.fspath(input_data)
+        if text:
+            return path.basename(path.normpath(text))
+    return "Input from DataFrame"
+
+
 def sv_matrix_directory(input_data):
     """
     Folder for the SV matrices generated from a BEDPE input folder: SV_Matrices
@@ -548,17 +563,10 @@ def sigProfilerExtractor(
     sysdata.write("Scipy version: " + scipy.__version__ + "\n")
     sysdata.write("Scikit-learn version: " + sklearn.__version__ + "\n")
 
-    # format the project_name first:
-    project = input_data  # will use this variable as the parameter for project argument in SigprofilerMatrixGenerator
-    try:
-        if project[-1] != "/":
-            project_name = project.split("/")[
-                -1
-            ]  # will use this variable as the parameter for project_name argument in SigprofilerMatrixGenerator
-        else:
-            project_name = project.split("/")[-2]
-    except:
-        project_name = "Input from DataFrame"
+    # The project argument for SigProfilerMatrixGenerator is the input path;
+    # its project_name, used in file names, is the input folder's own name.
+    project = input_data
+    project_name = input_project_name(input_data)
 
     execution_parameters = {
         "input_type": input_type,

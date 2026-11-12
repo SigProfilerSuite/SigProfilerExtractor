@@ -455,3 +455,19 @@ def test_results_show_each_signatures_cosmic_split_and_closest_match(page, tmp_p
     _wait_text(page.locator("#compareNote"), "COSMIC v3.6 SBS (GRCh37)")
     assert page.is_visible("#cosmicCard") is False  # the New run card, on another tab, is untouched
     assert "hidden" not in (page.get_attribute("#cosmicCard", "class") or "")
+
+
+def test_the_log_shows_windows_line_endings_and_keeps_the_last_progress_step(page, tmp_path, monkeypatch):
+    # Windows writes lines ending in \r\n. Progress bars redraw with a bare \r,
+    # and only their last state should show.
+    monkeypatch.setenv("FAKE_RUNJOB_PRINT", "first line\r\n\r 10%\r 50%\r100% |████|\r\nlast line\r\n")
+    page.click("#tab-run")
+    _matrix_input(page)
+    page.fill("#outputPath", str(tmp_path / "run"))
+    page.dispatch_event("#outputPath", "input")
+    _wait_until(lambda: not page.is_disabled("#startBtn"))
+    page.click("#startBtn")
+    _wait_text(page.locator("#jobPill"), "done")
+    _wait_text(page.locator("#jobLog"), "last line")
+    lines = page.locator("#jobLog").text_content().split("\n")
+    assert lines[:4] == ["== step 1/1: working", "first line", "100% |████|", "last line"]
