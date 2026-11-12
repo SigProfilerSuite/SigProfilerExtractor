@@ -6,7 +6,8 @@ from SigProfilerExtractor.controllers import cli_controller
 
 def main_function():
     commands = {
-        "sigprofilerextractor": "Extract mutational signatures from input samples."
+        "sigprofilerextractor": "Extract mutational signatures from input samples.",
+        "web": "Launch the local SigProfilerExtractor Workbench (a web app).",
     }
 
     if len(sys.argv) < 2 or sys.argv[1].lower() not in commands:
@@ -20,6 +21,10 @@ def main_function():
 
     if command == "sigprofilerextractor":
         controller.dispatch_sigProfilerExtractor(args)
+    elif command == "web":
+        from SigProfilerExtractor.web import launcher
+
+        sys.exit(launcher.main(args))
 
 
 def print_usage(commands):

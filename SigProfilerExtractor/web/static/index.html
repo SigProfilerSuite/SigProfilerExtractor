@@ -1,0 +1,601 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="workbench-token" content="__WORKBENCH_TOKEN__">
+<title>SigProfilerExtractor Workbench</title>
+<link rel="stylesheet" href="/static/styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%230A58AC'/><path d='M6 24V18h3v6H6zm5 0V11h3v13h-3zm5 0V15h3v9h-3zm5 0V8h3v16h-3z' fill='white'/></svg>">
+</head>
+<body>
+<div class="app" id="app">
+
+  <header class="topbar">
+    <button class="brand linkish" id="homeBtn" type="button" title="Home">
+      <span class="mark" aria-hidden="true">SE</span>
+      <span class="titles">
+        <span class="title">SigProfilerExtractor Workbench</span>
+        <span class="sub" id="envVersion"></span>
+      </span>
+    </button>
+    <div class="spacer"></div>
+    <span id="envPill" class="pill flat">checking</span>
+    <div class="pick auto">
+      <select id="themeSel" title="Theme" aria-label="Theme">
+        <option value="sandiego">UC San Diego</option>
+        <option value="ualbany">UAlbany</option>
+        <option value="sigprofilersuite">SigProfilerSuite</option>
+        <option value="night">Night</option>
+      </select>
+    </div>
+    <button class="btn sm" id="quitBtn" title="Stop the app, and any run it started">Quit</button>
+  </header>
+
+  <div class="body">
+    <nav class="sidebar" aria-label="Runs and results">
+      <section>
+        <h3>Runs
+          <button class="btn sm ghost" id="newRunBtn" title="Set up a new run">New</button>
+        </h3>
+        <div class="list" id="jobList"><p class="empty">No runs yet.</p></div>
+      </section>
+
+      <section>
+        <h3>Open results</h3>
+        <button class="btn choose" id="openResultsBtn" type="button">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M1.5 4.5v8a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1H8L6.5 3h-4a1 1 0 0 0-1 1z"/></svg>
+          Open a results folder
+        </button>
+        <input type="text" class="mono" id="openPath" style="margin-top:8px"
+               placeholder="or paste a path, then Enter" autocomplete="off"
+               aria-label="Results folder path">
+        <p class="hint" style="margin:6px 2px 0">Any folder SigProfilerExtractor wrote,
+          including runs made from Python or the command line.</p>
+      </section>
+
+      <footer class="cite">
+        <h3>Citing this tool</h3>
+        <p class="ref">Islam SMA, Díaz-Gay M, Wu Y, et al. Uncovering novel mutational
+          signatures by de novo extraction with SigProfilerExtractor.
+          <i>Cell Genomics</i> 2, 100179 (2022).</p>
+        <a href="https://doi.org/10.1016/j.xgen.2022.100179"
+           target="_blank" rel="noopener noreferrer">doi.org/10.1016/j.xgen.2022.100179</a>
+      </footer>
+    </nav>
+
+    <main class="main">
+      <header>
+        <div class="tabs" role="tablist">
+          <button role="tab" id="tab-home" data-tab="home" aria-selected="true">Home</button>
+          <button role="tab" id="tab-run" data-tab="run" aria-selected="false">New run</button>
+          <button role="tab" id="tab-monitor" data-tab="monitor" aria-selected="false">Monitor
+            <span class="count hidden" id="liveCount"></span></button>
+          <button role="tab" id="tab-results" data-tab="results" aria-selected="false">Results</button>
+          <button role="tab" id="tab-help" data-tab="help" aria-selected="false">Help</button>
+        </div>
+        <div class="spacer"></div>
+        <span class="mono" id="contextLabel"></span>
+      </header>
+
+      <!-- ---------------------------------------------------------- home -->
+      <section id="view-home" class="stack home">
+        <div class="hero card">
+          <div class="hero-text">
+            <p class="eyebrow">SigProfiler Suite · de novo mutational signatures</p>
+            <h2 class="hero-title">Find the mutational signatures shaping your samples</h2>
+            <p class="hero-lead">Every process that damages DNA, from tobacco smoke and
+              ultraviolet light to failing DNA repair, leaves its own pattern of mutations.
+              SigProfilerExtractor separates a cohort's mutations into those patterns,
+              <b>mutational signatures</b>, and reports how much each one contributed to every
+              sample. It tries every plausible number of signatures, keeps the most stable
+              solution and matches it to the COSMIC catalogue of known signatures.</p>
+            <p class="hero-lead">This Workbench runs it on your own computer, from variant
+              calls or a ready-made matrix to an interactive report, without writing code.</p>
+            <div class="hero-cta">
+              <button class="btn primary lg" id="homeStart" type="button">Start a new run</button>
+              <button class="btn lg" id="homeExample" type="button">Try the 21 breast cancer genomes</button>
+              <button class="btn lg ghost" id="homeOpen" type="button">Open results</button>
+            </div>
+            <p class="hint" id="homeExampleHint">The example finishes in about three minutes on a laptop.</p>
+          </div>
+          <div class="hero-art" id="heroArt" aria-hidden="true"></div>
+        </div>
+
+        <div class="home-two">
+          <div class="card home-card">
+            <div class="hd"><h3>You give</h3><span class="note">one cohort per run</span></div>
+            <div class="bd">
+              <ul class="give">
+                <li><b>Variant calls</b><span>A folder of VCF files, one per genome (MAF and simple
+                  text work too). Matrices are built for you by SigProfilerMatrixGenerator.</span></li>
+                <li><b>A mutation matrix</b><span>Mutation types down the rows, samples across:
+                  SBS96 to SBS4608, DBS78, ID83, CNV48 or SV32.</span></li>
+                <li><b>Structural variants</b><span>A folder of BEDPE files, classified into
+                  the 32 SV channels.</span></li>
+                <li><b>Copy-number segments</b><span>One segmentation file from ASCAT, Battenberg,
+                  FACETS, PURPLE, Sequenza and others, classified into 48 CNV channels.</span></li>
+              </ul>
+            </div>
+          </div>
+          <div class="card home-card">
+            <div class="hd"><h3>You get</h3><span class="note">for every mutation type</span></div>
+            <div class="bd">
+              <ul class="give">
+                <li><b>How many signatures</b><span>The suggested number, chosen from stability and
+                  reconstruction error across every number tried.</span></li>
+                <li><b>De novo signatures and activities</b><span>Each signature's profile, and how
+                  many mutations it contributed to each sample.</span></li>
+                <li><b>COSMIC decomposition</b><span>Each de novo signature explained by known COSMIC
+                  signatures (v3.6 by default), with sample activities.</span></li>
+                <li><b>Mutation probabilities</b><span>Which signature most likely caused each
+                  mutation type in each sample.</span></li>
+                <li><b>Plots and an interactive dashboard</b><span>PDFs for every solution, and a
+                  self-contained report to explore and share.</span></li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="hd"><h3>How it works</h3><span class="note">the method of Islam et al., Cell Genomics 2022</span></div>
+          <div class="bd">
+            <ol class="how">
+              <li><span class="n">1</span><b>Matrices</b><span>Variant calls are counted into mutation
+                matrices (SBS96, DBS78, ID83 and more), one column per sample.</span></li>
+              <li><span class="n">2</span><b>Many factorizations</b><span>For each candidate number of
+                signatures, non-negative matrix factorization runs on many resampled copies of the
+                data: 100 by default.</span></li>
+              <li><span class="n">3</span><b>Stable signatures</b><span>The replicate solutions are
+                clustered. A signature found again and again across replicates is stable.</span></li>
+              <li><span class="n">4</span><b>The number of signatures</b><span>The suggested solution
+                is the largest stable one that still reconstructs the samples well.</span></li>
+              <li><span class="n">5</span><b>Match to COSMIC</b><span>SigProfilerAssignment explains each
+                de novo signature with known COSMIC signatures and assigns them to every sample.</span></li>
+            </ol>
+          </div>
+        </div>
+
+        <div class="facts-row">
+          <div class="fact"><b>Benchmarked</b><span>Compared with 13 other tools on more than 60,000
+            simulated cancer genomes, it found more of the true signatures and far fewer false ones.</span></div>
+          <div class="fact"><b>Reproducible</b><span>Every run records its seed in Seeds.txt. Give it
+            back to repeat the run exactly.</span></div>
+          <div class="fact"><b>Private</b><span>Everything runs on this computer. Your data never
+            leaves it.</span></div>
+          <div class="fact"><b>Same results as code</b><span>The Workbench calls the same function as
+            Python and the command line, and writes the same files.</span></div>
+        </div>
+
+        <div class="card hidden" id="homeRecentCard">
+          <div class="hd"><h3>Pick up where you left off</h3></div>
+          <div class="bd"><div class="list recent" id="homeRecent"></div></div>
+        </div>
+      </section>
+
+      <!-- ------------------------------------------------------- new run -->
+      <section id="view-run" class="stack hidden">
+
+        <div class="card step-card" id="inputCard">
+          <div class="hd"><span class="step-no">1</span><h2>Input</h2>
+            <span class="note">what the signatures are extracted from</span>
+            <div class="spacer"></div>
+            <div class="pick auto"><select id="exampleSel" aria-label="Fill in an example">
+              <option value="">Try an example…</option></select></div></div>
+          <div class="bd">
+            <div class="kinds" role="radiogroup" aria-label="Kind of input" id="kindGroup">
+              <label class="kind"><input type="radio" name="kind" value="vcf" checked>
+                <span><b>Variant calls</b><small>folder of VCF, MAF or text files</small></span></label>
+              <label class="kind"><input type="radio" name="kind" value="matrix">
+                <span><b>Mutation matrix</b><small>one tab-separated file</small></span></label>
+              <label class="kind"><input type="radio" name="kind" value="bedpe">
+                <span><b>Structural variants</b><small>folder of BEDPE files</small></span></label>
+              <label class="kind"><input type="radio" name="kind" value="seg">
+                <span><b>Copy number</b><small>one segmentation file</small></span></label>
+            </div>
+            <div class="row pathrow after-grid">
+              <button class="btn choose" id="inputChoose" type="button">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M1.5 4.5v8a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1H8L6.5 3h-4a1 1 0 0 0-1 1z"/></svg>
+                <span id="inputChooseText">Choose the folder of variant calls</span>
+              </button>
+              <input type="text" class="mono" id="inputPath" autocomplete="off"
+                     placeholder="or paste a path, then Enter" aria-label="Input path">
+            </div>
+            <label class="field after-grid hidden" id="callerField"><span>Copy-number caller</span>
+              <p class="hint">The program that made the segmentation file; each writes its own columns.</p>
+              <div class="pick"><select id="segCaller"><option value="">Choose the caller…</option></select></div>
+            </label>
+            <div id="inputInfo"></div>
+          </div>
+        </div>
+
+        <div class="card step-card" id="genomeCard">
+          <div class="hd"><span class="step-no">2</span><h2 id="genomeTitle">Genome and contexts</h2>
+            <span class="note" id="genomeNote">the assembly the calls were made against, and what to extract</span></div>
+          <div class="bd">
+            <div id="vcfGenome">
+              <div class="grid-2">
+                <label class="field"><span>Reference genome</span>
+                  <p class="hint">Used to build the matrices and as the COSMIC reference.</p>
+                  <div class="pick"><select class="mono" id="genomeSel"></select></div>
+                </label>
+                <div class="field"><span class="lbl">Status</span>
+                  <p class="hint">Genomes are installed once, then reused.</p>
+                  <div id="genomeStatus" class="inline"></div>
+                </div>
+              </div>
+              <div class="field after-grid"><span class="lbl">Mutation contexts to extract</span>
+                <p class="hint">Each context is extracted separately, with its own signatures. SBS96, DBS78 and ID83 is SigProfilerExtractor's default.</p>
+                <div class="chips" id="contextChips"></div>
+              </div>
+              <label class="inline after-grid check"><input type="checkbox" id="exome">
+                Whole-exome data: keep exome mutations only, and use exome references</label>
+            </div>
+            <div id="otherGenome" class="hidden">
+              <label class="field"><span>COSMIC reference genome</span>
+                <p class="hint" id="opportunityHint">The build the COSMIC reference signatures are matched for.</p>
+                <div class="pick"><select class="mono" id="opportunitySel"></select></div>
+              </label>
+              <label class="inline after-grid check"><input type="checkbox" id="exomeOther">
+                Whole-exome data: use exome references</label>
+            </div>
+          </div>
+        </div>
+
+        <div class="card step-card" id="ranksCard">
+          <div class="hd"><span class="step-no">3</span><h2>Number of signatures</h2>
+            <span class="note">how many to try, and how thoroughly</span>
+            <div class="spacer"></div>
+            <button class="about-btn" type="button" data-about="about-ranks" aria-expanded="false" aria-label="About these settings">?</button></div>
+          <div class="bd">
+            <div class="about hidden" id="about-ranks"></div>
+            <div class="presets" role="radiogroup" aria-label="Preset" id="presetGroup"></div>
+            <div class="grid-3 after-grid">
+              <label class="field"><span>Fewest signatures</span>
+                <p class="hint">Default 1.</p>
+                <input type="number" min="1" step="1" id="minSig" class="mono"></label>
+              <label class="field"><span>Most signatures</span>
+                <p class="hint">Default 25; capped at the number of samples.</p>
+                <input type="number" min="1" step="1" id="maxSig" class="mono"></label>
+              <label class="field"><span>NMF replicates</span>
+                <p class="hint">Factorizations per number. Default 100.</p>
+                <input type="number" min="1" step="1" id="replicates" class="mono"></label>
+            </div>
+            <div class="note-box after-grid estimate" id="estimate"></div>
+          </div>
+        </div>
+
+        <div class="card step-card" id="cosmicCard">
+          <div class="hd"><span class="step-no">4</span><h2>COSMIC assignment</h2>
+            <span class="note">explain the de novo signatures with known ones</span></div>
+          <div class="bd">
+            <label class="toggle"><input type="checkbox" id="assign" checked>
+              <span><b>Match the solution to COSMIC signatures</b>
+              <small>With SigProfilerAssignment, after extraction. Untick to stop after the de novo signatures.</small></span></label>
+            <div id="assignOpts" class="after-grid">
+              <div class="grid-2">
+                <label class="field"><span>COSMIC version</span>
+                  <p class="hint">The catalogue release to match against. Default 3.6.</p>
+                  <div class="pick"><select class="mono" id="cosmicVersion"></select></div></label>
+              </div>
+              <div class="opts after-grid">
+                <label class="opt"><input type="checkbox" id="decompPlots" checked>
+                  <span><b>Decomposition plots<span class="tag">PDF</span></b>
+                  <small>Each de novo signature beside the COSMIC signatures that explain it.</small></span></label>
+                <label class="opt"><input type="checkbox" id="probabilities" checked>
+                  <span><b>Mutation probabilities<span class="tag">.txt</span></b>
+                  <small>The chance each signature caused each mutation type, per sample.</small></span></label>
+                <label class="opt"><input type="checkbox" id="collapse96" checked>
+                  <span><b>Match SBS288/1536 as SBS96<span class="tag">SBS</span></b>
+                  <small>Use the SBS96 COSMIC catalogue for larger SBS contexts.</small></span></label>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card step-card" id="outputCard">
+          <div class="hd"><span class="step-no">5</span><h2>Output</h2>
+            <span class="note">where the results go</span></div>
+          <div class="bd">
+            <label class="field"><span>Output folder</span>
+              <p class="hint">Created if it does not exist. Each mutation context gets its own folder inside.</p>
+              <div class="row">
+                <input type="text" class="mono" id="outputPath" autocomplete="off" placeholder="choose an input first">
+                <button class="btn" id="outputBrowse" type="button">Browse</button>
+              </div></label>
+            <div id="outCheck"></div>
+          </div>
+        </div>
+
+        <details class="card adv-card" id="advCard">
+          <summary class="hd"><h2>Advanced settings</h2>
+            <span class="note">the defaults reproduce SigProfilerExtractor's published method</span>
+            <div class="spacer"></div><span class="pill flat" id="advChanged"></span></summary>
+          <div class="bd stack">
+            <section class="adv-group">
+              <h3>NMF engine</h3>
+              <div class="grid-3">
+                <label class="field"><span>Matrix normalization</span>
+                  <p class="hint">gmm (default), 100X, log2, none, or a whole-number cap.</p>
+                  <input type="text" class="mono" id="normalization" list="normList">
+                  <datalist id="normList"></datalist></label>
+                <label class="field"><span>Initialization</span>
+                  <p class="hint">How W and H start. Default random.</p>
+                  <div class="pick"><select class="mono" id="nmfInit"></select></div></label>
+                <label class="field"><span>Precision</span>
+                  <p class="hint">single (default) or double.</p>
+                  <div class="pick"><select class="mono" id="precision"></select></div></label>
+                <label class="field"><span>Minimum iterations</span>
+                  <p class="hint">Default 10000.</p>
+                  <input type="number" min="1" id="minIter" class="mono"></label>
+                <label class="field"><span>Maximum iterations</span>
+                  <p class="hint">Default 1000000.</p>
+                  <input type="number" min="1" id="maxIter" class="mono"></label>
+                <label class="field"><span>Convergence test every</span>
+                  <p class="hint">Iterations. Default 10000.</p>
+                  <input type="number" min="1" id="testConv" class="mono"></label>
+                <label class="field"><span>Tolerance</span>
+                  <p class="hint">Default 1e-15.</p>
+                  <input type="text" id="tolerance" class="mono"></label>
+                <label class="field"><span>Clustering distance</span>
+                  <p class="hint">For clustering replicates. Default cosine.</p>
+                  <div class="pick"><select class="mono" id="clustering"></select></div></label>
+              </div>
+              <label class="inline check after-grid"><input type="checkbox" id="resample" checked>
+                Resample: add Poisson noise to each replicate (default on)</label>
+            </section>
+            <section class="adv-group">
+              <h3>Choosing the solution</h3>
+              <div class="grid-3">
+                <label class="field"><span>Average stability</span>
+                  <p class="hint">Cutoff, 0 to 1. Default 0.8.</p>
+                  <input type="number" step="0.05" min="0" max="1" id="stability" class="mono"></label>
+                <label class="field"><span>Minimum stability</span>
+                  <p class="hint">Cutoff, 0 to 1. Default 0.2.</p>
+                  <input type="number" step="0.05" min="0" max="1" id="minStability" class="mono"></label>
+                <label class="field"><span>Combined stability</span>
+                  <p class="hint">Cutoff, 0 to 2. Default 1.0.</p>
+                  <input type="number" step="0.05" min="0" max="2" id="combinedStability" class="mono"></label>
+              </div>
+              <label class="inline check after-grid"><input type="checkbox" id="stabilityDrop">
+                Allow the stability to drop when choosing the number of signatures</label>
+            </section>
+            <section class="adv-group">
+              <h3>COSMIC assignment penalties</h3>
+              <div class="grid-3">
+                <label class="field"><span>Add penalty</span>
+                  <p class="hint">Default 0.05.</p>
+                  <input type="number" step="0.01" min="0" max="1" id="addPenalty" class="mono"></label>
+                <label class="field"><span>Remove penalty</span>
+                  <p class="hint">Default 0.01.</p>
+                  <input type="number" step="0.01" min="0" max="1" id="removePenalty" class="mono"></label>
+                <label class="field"><span>Initial remove penalty</span>
+                  <p class="hint">Default 0.05.</p>
+                  <input type="number" step="0.01" min="0" max="1" id="initialPenalty" class="mono"></label>
+              </div>
+            </section>
+            <section class="adv-group">
+              <h3>Computer</h3>
+              <div class="grid-3">
+                <label class="field"><span>CPUs for extraction</span>
+                  <p class="hint" id="cpuHint">Blank uses all of them.</p>
+                  <input type="number" min="1" id="cpu" class="mono" placeholder="all"></label>
+                <label class="field"><span>CPUs for assignment</span>
+                  <p class="hint">Blank uses all of them.</p>
+                  <input type="number" min="1" id="assignCpu" class="mono" placeholder="all"></label>
+                <label class="field hidden" id="batchField"><span>GPU batch size</span>
+                  <p class="hint">Replicates per GPU batch. Default 1.</p>
+                  <input type="number" min="1" id="batchSize" class="mono"></label>
+              </div>
+              <label class="inline check after-grid" id="gpuRow"><input type="checkbox" id="gpu">
+                <span id="gpuText">Use the GPU (CUDA)</span></label>
+            </section>
+            <section class="adv-group">
+              <h3>Reproducibility and outputs</h3>
+              <label class="field"><span>Seeds file</span>
+                <p class="hint">A Seeds.txt from an earlier run repeats it exactly. Blank draws a new seed.</p>
+                <div class="row">
+                  <input type="text" class="mono" id="seedsPath" autocomplete="off" placeholder="random">
+                  <button class="btn" id="seedsBrowse" type="button">Browse</button>
+                </div></label>
+              <div id="seedsNote"></div>
+              <div class="opts after-grid">
+                <label class="opt"><input type="checkbox" id="dashboard" checked>
+                  <span><b>Interactive dashboard<span class="tag">reports.html</span></b>
+                  <small>A self-contained report of the whole run.</small></span></label>
+                <label class="opt"><input type="checkbox" id="allMatrices">
+                  <span><b>Every replicate's matrices<span class="tag">Wall, Hall</span></b>
+                  <small>All W and H matrices per rank. Can be large.</small></span></label>
+              </div>
+              <label class="field after-grid"><span>Reference files folder</span>
+                <p class="hint">Where genomes and reference files live (volume). Blank uses the default.</p>
+                <div class="row">
+                  <input type="text" class="mono" id="volumePath" autocomplete="off" placeholder="default">
+                  <button class="btn" id="volumeBrowse" type="button">Browse</button>
+                </div></label>
+            </section>
+            <div><button class="btn sm" id="resetAdvanced" type="button">Restore the defaults</button></div>
+          </div>
+        </details>
+
+        <div class="launch">
+          <button class="btn primary lg" id="startBtn" type="button">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v11l9-5.5z" fill="currentColor"/></svg>
+            Start run
+          </button>
+          <span class="summary" id="launchSummary"></span>
+        </div>
+        <div id="startError"></div>
+      </section>
+
+      <!-- ------------------------------------------------------- monitor -->
+      <section id="view-monitor" class="stack hidden">
+        <div id="monitorEmpty" class="note-box">No run selected. Start one, or pick one from the Runs list.</div>
+        <div id="monitorBody" class="stack hidden">
+          <div class="card">
+            <div class="hd"><h2 id="jobTitle">run</h2><span id="jobPill" class="pill flat"></span>
+              <span class="note" id="jobNote"></span>
+              <div class="spacer"></div>
+              <button class="btn sm danger" id="stopBtn" type="button">Stop</button>
+              <button class="btn sm hidden" id="hideBtn" type="button" title="Take this run off the Runs list. Its results stay on disk.">Remove from list</button>
+              <button class="btn sm danger hidden" id="deleteBtn" type="button" title="Delete this run and its results for good">Delete</button></div>
+            <div class="bd">
+              <div class="progress-head"><span id="jobPhase"></span><span class="mono" id="jobClock"></span></div>
+              <div class="bar"><i id="jobBar"></i></div>
+              <div class="ctx-progress" id="ctxProgress"></div>
+              <dl class="facts" id="jobFacts"></dl>
+            </div>
+            <div class="bd" id="jobResult"></div>
+          </div>
+          <div class="card">
+            <div class="hd"><h3>Log</h3><span class="note">SigProfilerExtractor's own output</span>
+              <div class="spacer"></div>
+              <label class="inline muted" style="font-size:12px"><input type="checkbox" id="followLog" checked> follow</label></div>
+            <div class="bd"><pre class="log" id="jobLog"></pre></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ------------------------------------------------------- results -->
+      <section id="view-results" class="stack hidden">
+        <div id="resultsEmpty">
+          <div class="note-box wide-only">No results open. Use <b>Open a results folder</b>
+            in the sidebar, or open a finished run from Monitor.</div>
+          <div class="card narrow-only">
+            <div class="hd"><h2>Open results</h2>
+              <span class="note">any folder SigProfilerExtractor wrote, or a finished run from Monitor</span></div>
+            <div class="bd">
+              <button class="btn choose" id="resultsChoose" type="button">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M1.5 4.5v8a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1H8L6.5 3h-4a1 1 0 0 0-1 1z"/></svg>
+                Open a results folder
+              </button>
+              <div class="row pathrow">
+                <input type="text" class="mono" id="resultsPath" autocomplete="off"
+                       placeholder="or paste a path, then Enter" aria-label="Results folder path">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="resultsBody" class="stack hidden">
+          <div id="resNotes" class="stack-sm"></div>
+          <div class="ctx-cards" id="ctxCards"></div>
+
+          <div class="card" id="dashCard">
+            <div class="hd"><h2>Interactive dashboard</h2>
+              <span class="note" id="dashNote">SigProfilerExtractor's reports.html</span>
+              <div class="spacer"></div>
+              <a class="btn sm" id="dashOpen" target="_blank" rel="noopener">Open in a new tab</a>
+              <a class="btn sm" id="dashDownload">Download</a>
+              <button class="btn sm" id="dashRebuild" type="button" title="Build reports.html again from the files in this folder">Rebuild</button></div>
+            <div class="dash-wrap" id="dashWrap">
+              <iframe id="dashFrame" title="SigProfilerExtractor results dashboard"
+                      sandbox="allow-scripts allow-downloads allow-popups" referrerpolicy="no-referrer"></iframe>
+            </div>
+            <div class="bd hidden" id="dashMissing"></div>
+          </div>
+
+          <div class="card" id="plotsCard">
+            <div class="hd"><h2>PDF plots</h2><span class="note" id="plotsNote"></span></div>
+            <div class="bd" id="plotGroups"></div>
+          </div>
+
+          <div class="card">
+            <div class="hd"><h2>Tables and run files</h2><span class="note" id="filesNote"></span></div>
+            <div class="files" id="fileList"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ---------------------------------------------------------- help -->
+      <section id="view-help" class="stack hidden">
+        <div class="card help-intro">
+          <div class="hd"><h2>Getting started</h2></div>
+          <div class="bd">
+            <p>A run has three parts: <b>set it up</b> on New run, <b>follow it</b> on Monitor,
+              and <b>explore it</b> on Results. The fastest way to see all three is the
+              21 breast cancer genomes example with the Quick look preset: about three minutes.</p>
+          </div>
+        </div>
+        <details class="card help-sec" open>
+          <summary class="hd"><h3>1. Choosing the input</h3></summary>
+          <div class="bd">
+            <dl class="defs">
+              <dt>Variant calls</dt><dd>A folder of VCF files, one per sample (MAF and SigProfiler
+                simple text are read too). Choose the genome they were called against; the
+                matrices are built by SigProfilerMatrixGenerator, which writes <span class="mono">input/</span>
+                and <span class="mono">output/</span> folders into that folder.</dd>
+              <dt>Mutation matrix</dt><dd>One tab-separated file: mutation types in the first column,
+                one column per sample. Its context follows from the number of rows: 96, 288, 384,
+                1536 or 4608 for SBS, 78 for DBS, 83 for ID, 48 for CNV and 32 for SV. Empty and
+                all-zero samples are dropped; samples with some values missing stop the run.</dd>
+              <dt>Structural variants</dt><dd>A folder of BEDPE files, one per sample. The SV32
+                matrix is written to an <span class="mono">SV_Matrices</span> folder beside it.</dd>
+              <dt>Copy number</dt><dd>One segmentation file covering every sample, and the caller
+                that made it.</dd>
+            </dl>
+          </div>
+        </details>
+        <details class="card help-sec">
+          <summary class="hd"><h3>2. How much searching</h3></summary>
+          <div class="bd">
+            <p>For every number of signatures from the fewest to the most, SigProfilerExtractor
+              runs the factorization once per replicate. The work is contexts × numbers ×
+              replicates, which the estimate under the presets adds up. <b>Quick look</b> (1 to 5,
+              10 replicates) is for a first look; <b>Standard</b> (1 to 25, 100 replicates) is the
+              published setting, and what results for a paper should use.</p>
+          </div>
+        </details>
+        <details class="card help-sec">
+          <summary class="hd"><h3>3. Reading the results</h3></summary>
+          <div class="bd">
+            <dl class="defs">
+              <dt>Suggested solution</dt><dd>The number of signatures SigProfilerExtractor chose for
+                each context, its de novo signatures and their activities, in
+                <span class="mono">&lt;context&gt;/Suggested_Solution</span>.</dd>
+              <dt>All solutions</dt><dd>Every number tried, with stability and error statistics, in
+                <span class="mono">&lt;context&gt;/All_Solutions</span>; the selection plot shows how the
+                number was chosen.</dd>
+              <dt>COSMIC decomposition</dt><dd>The de novo signatures explained by COSMIC signatures,
+                and the COSMIC activities per sample.</dd>
+              <dt>Dashboard</dt><dd><span class="mono">reports.html</span>, written by SigProfilerExtractor
+                itself: open it here, in a new tab, or send it to a colleague; it needs nothing else.</dd>
+            </dl>
+          </div>
+        </details>
+        <details class="card help-sec">
+          <summary class="hd"><h3>4. Stopping the Workbench</h3></summary>
+          <div class="bd">
+            <p><b>Quit</b> in the top bar stops the app and any run still going. From a terminal,
+              <span class="mono">./launch_web.sh --stop</span> does the same. Results already written stay.</p>
+          </div>
+        </details>
+      </section>
+    </main>
+  </div>
+</div>
+
+<dialog id="quitDialog">
+  <div class="hd"><h3>Quit the Workbench?</h3></div>
+  <div class="msg" id="quitText">This stops the app. Your results stay where they are.</div>
+  <div class="ft">
+    <button class="btn" id="quitCancel" type="button">Cancel</button>
+    <button class="btn primary" id="quitGo" type="button">Quit</button>
+  </div>
+</dialog>
+
+<dialog id="deleteDialog">
+  <div class="hd"><h3 id="deleteTitle">Delete this run for good?</h3></div>
+  <div class="msg" id="deleteText"></div>
+  <div class="ft">
+    <button class="btn" id="deleteCancel" type="button">Cancel</button>
+    <button class="btn danger-solid" id="deleteGo" type="button">Delete</button>
+  </div>
+</dialog>
+
+<div class="toast hidden" id="toast" role="status"><span id="toastText"></span>
+  <button class="btn sm hidden" id="toastAction" type="button"></button></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

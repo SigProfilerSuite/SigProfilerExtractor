@@ -42,6 +42,8 @@ nav:
   - Output:
       - '5. Output - All Solutions': '5. Output - All Solutions.md'
       - '6. Output - Suggested Solution': '6. Output - Suggested Solution.md'
+  - Graphical Interface:
+      - '7. Graphical Interface (Workbench)': '7. Web App.md'
 
 plugins:
   - search

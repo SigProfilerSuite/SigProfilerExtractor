@@ -6,3 +6,6 @@ include SigProfilerExtractor/data/MatObjInput/*
 include SigProfilerExtractor/data/ReferenceFiles/*
 include SigProfilerExtractor/controllers/*
 recursive-include SigProfilerExtractor/dashboard_assets *.html *.css *.js
+
+# Workbench (local web app) frontend
+recursive-include SigProfilerExtractor/web/static *.html *.css *.js

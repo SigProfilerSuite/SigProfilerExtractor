@@ -140,3 +140,6 @@ test_matrix_*_output/
 SigProfilerExtractor/data/VCFInput/logs/
 SigProfilerExtractor/data/VCFInput/input/
 SigProfilerExtractor/data/VCFInput/output/
+
+# Workbench launcher environment
+.venv-dashboard/
