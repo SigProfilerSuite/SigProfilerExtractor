@@ -21,6 +21,7 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -66,17 +67,47 @@ def _fingerprint_path() -> Path:
     return Path(sys.prefix) / ".fingerprint"
 
 
+def _uv_command() -> list[str] | None:
+    """How to run uv for this environment, adding uv to it if needed.
+
+    uv downloads and installs in parallel and keeps a shared cache, so it is
+    much faster than pip for large dependencies such as PyTorch. None means
+    use pip: SPE_WEB_INSTALLER=pip was set, or uv could not be added.
+    """
+    if os.environ.get("SPE_WEB_INSTALLER", "").strip().lower() == "pip":
+        return None
+    found = shutil.which("uv")
+    if found:
+        return [found]
+    added = subprocess.run(
+        [sys.executable, "-m", "pip", "install", "--quiet", "--disable-pip-version-check", "uv"],
+        check=False,
+    )
+    return [sys.executable, "-m", "uv"] if added.returncode == 0 else None
+
+
 def ensure_dependencies(repo_root: Path, force: bool = False) -> None:
     fingerprint_path = _fingerprint_path()
-    if needs_install(repo_root, fingerprint_path, force):
-        print("Installing the Workbench's dependencies (the first time takes a few minutes)...", flush=True)
+    if not needs_install(repo_root, fingerprint_path, force):
+        print("Dependencies already installed; skipping install.", flush=True)
+        return
+    print("Installing the Workbench's dependencies (the first time takes a few minutes)...", flush=True)
+    uv = _uv_command()
+    installed = False
+    if uv is not None:
+        result = subprocess.run(
+            [*uv, "pip", "install", "--python", sys.executable, "-e", str(repo_root)],
+            check=False,
+        )
+        installed = result.returncode == 0
+        if not installed:
+            print("uv could not install the dependencies; trying pip instead.", flush=True)
+    if not installed:
         subprocess.run(
             [sys.executable, "-m", "pip", "install", "--quiet", "-e", str(repo_root)],
             check=True,
         )
-        fingerprint_path.write_text(compute_fingerprint(repo_root), encoding="utf-8")
-    else:
-        print("Dependencies already installed; skipping install.", flush=True)
+    fingerprint_path.write_text(compute_fingerprint(repo_root), encoding="utf-8")
 
 
 def _state_dir() -> Path:
