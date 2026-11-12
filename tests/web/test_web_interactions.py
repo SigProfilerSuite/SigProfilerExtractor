@@ -275,6 +275,8 @@ def test_phone_width_has_no_horizontal_overflow(dashboard_url):
                 phone.click(f"#tab-{tab}")
                 width = phone.evaluate("document.documentElement.scrollWidth")
                 assert width <= 390, f"{tab} view is {width}px wide at a 390px viewport"
+            # The side panel sits below the work area: nothing to resize or hide.
+            assert phone.is_hidden("#sideToggle") and phone.is_hidden("#sideSplitter")
         finally:
             browser.close()
 
@@ -304,12 +306,152 @@ def test_delete_works_before_the_runs_first_status_arrives(page, tmp_path):
     page.click("#toastAction")
     page.locator("#jobList .runrow").first.wait_for()
 
-    def slow_status(route):
-        time.sleep(3)
-        route.continue_()
+    # Hold the run's status responses back (only GET /api/jobs/<id>, not its log
+    # or delete preview) rather than sleeping in the handler, which would block
+    # Playwright's event loop while the 1 s polls pile up.
+    held = []
 
-    page.route(lambda url: "/api/jobs/" in url and url.rstrip("/").count("/") == 5 and "?" not in url,
-               slow_status)
+    def status_only(url):
+        return "/api/jobs/" in url and url.rstrip("/").count("/") == 5 and "?" not in url
+
+    page.route(status_only, lambda route: held.append(route))  # a plain function: Playwright tags it
     page.locator("#jobList .runrow .item").first.click()
     page.click("#deleteBtn")
     page.wait_for_selector("#deleteDialog[open]", timeout=2000)
+    assert held, "the run's status was held back, so the click came first"
+    # continue_() before unroute(): unroute releases held routes itself.
+    for route in held:
+        route.continue_()
+    page.unroute(status_only)
+
+
+# ---------------------------------------------------- resizable side panels
+
+def _width(page, selector):
+    box = page.locator(selector).bounding_box()
+    return round(box["width"]) if box else 0
+
+
+def test_the_side_panel_resizes_hides_and_is_remembered(page):
+    assert _width(page, "#sidebar") == 280
+    handle = page.locator("#sideSplitter").bounding_box()
+    page.mouse.move(handle["x"] + handle["width"] / 2, 300)
+    page.mouse.down()
+    page.mouse.move(420, 320, steps=6)
+    page.mouse.up()
+    assert _width(page, "#sidebar") == 420
+
+    page.focus("#sideSplitter")
+    page.keyboard.press("ArrowLeft")
+    assert _width(page, "#sidebar") == 400
+
+    page.click("#sideToggle")
+    assert page.is_hidden("#sidebar")
+    assert page.get_attribute("#sideToggle", "aria-expanded") == "false"
+    main_wide = _width(page, ".main")
+
+    page.reload()
+    page.wait_for_selector("#exampleSel option[value='sbs96']", state="attached")
+    assert page.is_hidden("#sidebar"), "hidden is remembered"
+    assert _width(page, ".main") == main_wide
+    page.dblclick("#sideSplitter")
+    assert _width(page, "#sidebar") == 400, "comes back at its last width"
+
+
+def test_dragging_the_handle_far_left_hides_the_panel(page):
+    handle = page.locator("#sideSplitter").bounding_box()
+    page.mouse.move(handle["x"] + handle["width"] / 2, 300)
+    page.mouse.down()
+    page.mouse.move(40, 300, steps=6)
+    page.mouse.up()
+    assert page.is_hidden("#sidebar")
+
+
+def _synthetic_output(root):
+    """A small SBS6 output SigProfilerExtractor's dashboard can be built from."""
+    sbs6 = ("C>A", "C>G", "C>T", "T>A", "T>C", "T>G")
+
+    def table(path, header, rows, sep="\t"):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n".join(sep.join(map(str, r)) for r in [header, *rows]) + "\n")
+
+    ctx = root / "SBS6"
+    sol = ctx / "All_Solutions" / "SBS6_2_Signatures"
+    table(ctx / "All_solutions_stat.csv", ["Signatures", "Stability (Avg Silhouette)", "Minimum Stability",
+          "Considerable Solution", "Matrix Frobenius%", "Mean Cosine Distance"],
+          [["2*", 0.91, 0.82, "YES", "4.5%", 0.012]], sep=",")
+    table(ctx / "Samples.txt", ["MutationType", "S1", "S2"], [(m, i + 2, i + 4) for i, m in enumerate(sbs6)])
+    table(sol / "Signatures" / "SBS6_S2_Signatures.txt", ["MutationType", "SBS6A", "SBS6B"],
+          [(m, (i + 1) / 21, (6 - i) / 21) for i, m in enumerate(sbs6)])
+    table(sol / "Activities" / "SBS6_S2_NMF_Activities.txt", ["Samples", "SBS6A", "SBS6B"], [["S1", 20, 10], ["S2", 5, 30]])
+    table(sol / "Solution_Stats" / "SBS6_S2_Signatures_stats.txt", ["Signatures", "Stability", "Total Mutations"],
+          [["SBS6A", 0.95, 25], ["SBS6B", 0.87, 40]])
+    table(sol / "Solution_Stats" / "SBS6_S2_Samples_stats.txt", ["Sample Names", "Total Mutations",
+          "Cosine Similarity", "L1_Norm_%"], [["S1", 30, 0.98, "6.1%"], ["S2", 35, 0.97, "7.2%"]])
+    table(sol / "Solution_Stats" / "SBS6_S2_NMF_Convergence_Information.txt", ["NMF_Replicate", "KL Divergence",
+          "Correlation", "Convergence Iterations"], [[1, 0.02, 0.98, 100], [2, 0.018, 0.99, 120]])
+    (root / "JOB_METADATA.txt").write_text("completed\n")
+    return root
+
+
+def test_the_dashboards_own_panel_resizes_and_hides_inside_its_sandbox(page, tmp_path):
+    from SigProfilerExtractor.dashboard import create_dashboard
+
+    out = _synthetic_output(tmp_path / "out")
+    create_dashboard(out)
+    # Wide enough that the frame is above the dashboard's own 980 px narrow layout.
+    page.set_viewport_size({"width": 1600, "height": 900})
+    page.fill("#openPath", str(out))
+    page.press("#openPath", "Enter")
+    frame = page.frame_locator("#dashFrame")
+    frame.locator("#dashboardSidebar").wait_for()
+    # The frame is sandboxed without same-origin access, so the dashboard
+    # cannot use local storage: it must still start and work.
+    before = frame.locator("#dashboardSidebar").bounding_box()["width"]
+    assert round(before) == 220
+    handle = frame.locator("#sidebarSplitter").bounding_box()
+    frame_left = page.locator("#dashFrame").bounding_box()["x"]
+    page.mouse.move(handle["x"] + handle["width"] / 2, handle["y"] + 200)
+    page.mouse.down()
+    page.mouse.move(frame_left + 340, handle["y"] + 200, steps=6)
+    page.mouse.up()
+    assert round(frame.locator("#dashboardSidebar").bounding_box()["width"]) == 340
+    frame.locator("#sidebarToggle").click()
+    _wait_until(lambda: frame.locator("#dashboardSidebar").is_hidden())
+    assert frame.locator("#sidebarToggle").get_attribute("aria-expanded") == "false"
+
+
+def test_results_show_each_signatures_cosmic_split_and_closest_match(page, tmp_path):
+    from SigProfilerExtractor.web import results
+
+    catalogue, _ = results.cosmic_catalogue(96, {})
+    if catalogue is None:
+        pytest.skip("SigProfilerAssignment's COSMIC catalogue is not installed")
+    rows = [line.split("\t") for line in catalogue.read_text().splitlines()]
+    col = rows[0].index("SBS13")
+    out = tmp_path / "out"
+    sig = out / "SBS96" / "Suggested_Solution" / "SBS96_De-Novo_Solution" / "Signatures"
+    sig.mkdir(parents=True)
+    (sig / "SBS96_De-Novo_Signatures.txt").write_text(
+        "MutationType\tSBS96A\n" + "".join(f"{r[0]}\t{r[col]}\n" for r in rows[1:]))
+    cosmic = out / "SBS96" / "Suggested_Solution" / "COSMIC_SBS96_Decomposed_Solution"
+    cosmic.mkdir(parents=True)
+    (cosmic / "De_Novo_map_to_COSMIC_SBS96.csv").write_text(
+        "De novo extracted, Global NMF Signatures, L1 Error %, L2 Error %, KL Divergence, Cosine Similarity, Correlation\n"
+        "Signature 96-SBS96A, Signature SBS2 (40.00%) & Signature SBS13 (60.00%), 5, 4, 0.01, 0.99, 0.98\n")
+    (out / "SBS96" / "All_solutions_stat.csv").write_text("Signatures,x\n1*,0.9\n")
+    (out / "JOB_METADATA.txt").write_text("\topportunity_genome: GRCh37\n\tcosmic_version: 3.6\n")
+
+    page.fill("#openPath", str(out))
+    page.press("#openPath", "Enter")
+    row = page.locator("#compareBody .cmp-row[data-signature='SBS96A']")
+    row.wait_for()
+    assert row.locator(".split-bar > span").count() == 2
+    assert row.locator(".split-legend").text_content().replace("\xa0", " ") == "SBS13 60.0%SBS2 40.0%"
+    _wait_text(row.locator(".split-fit"), "cosine 0.99")
+    assert row.locator(".close-best b").text_content() == "SBS13"
+    assert "cosine 1.00" in row.locator(".close-best .pill").text_content()
+    assert "good" in row.locator(".close-best .pill").get_attribute("class")
+    _wait_text(page.locator("#compareNote"), "COSMIC v3.6 SBS (GRCh37)")
+    assert page.is_visible("#cosmicCard") is False  # the New run card, on another tab, is untouched
+    assert "hidden" not in (page.get_attribute("#cosmicCard", "class") or "")

@@ -75,8 +75,10 @@ entirely on your own computer: your data never leaves it.
   default, and bundled examples to try with one click.
 - **Live progress** for each mutation type: the number of signatures being tried, the
   replicate, the COSMIC step and the time left.
-- **Results:** the suggested solution for each mutation type, SigProfilerExtractor's
-  interactive dashboard (`reports.html`), every PDF plot and every table.
+- **Results:** the suggested solution for each mutation type; how each de novo signature
+  splits into COSMIC signatures and its closest COSMIC signature by cosine similarity;
+  SigProfilerExtractor's interactive dashboard (`reports.html`); every PDF plot and every
+  table.
 - **The same results as code:** it calls the same function as Python and the command line,
   with the same defaults, and writes the same files.
 

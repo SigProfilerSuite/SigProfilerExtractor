@@ -165,13 +165,171 @@ def _cosmic_matches(solution: Path) -> list[str]:
     return _header_names(signatures[0]) if signatures else []
 
 
+
+# ------------------------------------------------------ de novo vs COSMIC
+
+_COSMIC_GENOMES = ("GRCh37", "GRCh38", "mm9", "mm10", "mm39", "rn6", "rn7")
+
+
+def run_settings(root: Path) -> dict:
+    """The run's parameters, as JOB_METADATA.txt records them ("\tkey: value")."""
+    settings: dict = {}
+    try:
+        lines = (root / "JOB_METADATA.txt").read_text(errors="replace").splitlines()
+    except OSError:
+        return settings
+    for line in lines:
+        if line.startswith("\t") and ": " in line:
+            key, value = line.strip().split(": ", 1)
+            settings.setdefault(key, value.split(";")[0].strip())
+    return settings
+
+
+def cosmic_catalogue(channels: int, settings: dict) -> tuple[Path | None, str]:
+    """The COSMIC catalogue SigProfilerAssignment matched a context against.
+
+    Mirrors SigProfilerAssignment's choice (decompose_subroutines): SBS96 and
+    DBS78 use the run's genome (the reference genome for VCF input, otherwise
+    the COSMIC reference genome) and its exome variant; ID83 and CNV48 use
+    GRCh37, SV32 GRCh38. SBS288 and SBS1536 are matched as SBS96 unless the
+    run turned collapse_to_SBS96 off. Returns (path or None, label).
+    """
+    try:
+        import SigProfilerAssignment
+    except ImportError:
+        return None, ""
+    base = Path(SigProfilerAssignment.__file__).resolve().parent / "data" / "Reference_Signatures"
+    try:
+        version = float(settings.get("cosmic_version", "3.6"))
+    except ValueError:
+        version = 3.6
+    genome = (settings.get("reference_genome") if settings.get("input_type") == "vcf"
+              else settings.get("opportunity_genome")) or "GRCh37"
+    if genome not in _COSMIC_GENOMES:
+        genome = "GRCh37"
+    exome = settings.get("exome") == "True"
+    collapse = settings.get("collapse_to_SBS96", "True") != "False"
+    if channels in (288, 1536) and collapse:
+        channels = 96
+    if channels == 96:
+        kind, build = "SBS", genome
+    elif channels in (288, 1536):
+        kind, build, exome = f"SBS{channels}", "GRCh37", False
+    elif channels == 78:
+        kind, build, version = "DBS", genome, (version if version >= 3 else 3.6)
+    elif channels == 83:
+        kind, build, exome, version = "ID", "GRCh37", False, (version if version >= 3 else 3.6)
+    elif channels == 48:
+        kind, build, exome, version = "CN", "GRCh37", False, (version if version >= 3.3 else 3.6)
+    elif channels == 32:
+        kind, build, exome, version = "SV", "GRCh38", False, (version if version >= 3.4 else 3.6)
+    else:
+        return None, ""
+    name = f"COSMIC_v{version:g}_{kind}_{build}{'_exome' if exome else ''}.txt"
+    label = f"COSMIC v{version:g} {kind} ({build}{', exome' if exome else ''})"
+    path = base / build / name
+    return (path if path.is_file() else None), label
+
+
+def _read_matrix(path: Path) -> tuple[list[str], list[str], list[list[float]]]:
+    """Row labels, column names and columns of a tab-separated signature matrix."""
+    rows = _read_rows(path, "\t")
+    names = [n.strip() for n in rows[0][1:]]
+    labels, columns = [], [[] for _ in names]
+    for row in rows[1:]:
+        labels.append(row[0].strip())
+        for j in range(len(names)):
+            try:
+                columns[j].append(float(row[j + 1]))
+            except (IndexError, ValueError):
+                columns[j].append(0.0)
+    return labels, names, columns
+
+
+def _to_sbs96(label: str) -> str:
+    """An SBS288 ("T:A[C>A]A") or SBS1536 ("AA[C>A]AA") channel's SBS96 channel."""
+    label = label.split(":", 1)[-1]
+    return label[1:-1] if len(label) == 9 else label
+
+
+def _cosine(a: list[float], b: list[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b))
+    na = sum(x * x for x in a) ** 0.5
+    nb = sum(y * y for y in b) ** 0.5
+    return dot / (na * nb) if na and nb else 0.0
+
+
+def closest_cosmic(signature: dict[str, float], catalogue: Path, top: int = 3) -> list[dict]:
+    """The COSMIC signatures most similar to one de novo signature (cosine)."""
+    labels, names, columns = _read_matrix(catalogue)
+    if not set(labels) <= set(signature):
+        collapsed: dict[str, float] = {}
+        for label, value in signature.items():
+            collapsed[_to_sbs96(label)] = collapsed.get(_to_sbs96(label), 0.0) + value
+        signature = collapsed
+    if not set(labels) <= set(signature):
+        return []
+    vector = [signature[label] for label in labels]
+    scored = sorted(((_cosine(vector, col), name) for name, col in zip(names, columns)), reverse=True)
+    return [{"name": name, "cosine": round(score, 3)} for score, name in scored[:top]]
+
+
+_COMPONENT = re.compile(r"Signature\s+(?P<name>\S+)\s+\((?P<percent>[\d.]+)%\)")
+
+
+def _decompositions(mapping: Path) -> dict[str, dict]:
+    """SigProfilerAssignment's split of each de novo signature into COSMIC ones."""
+    rows = _read_rows(mapping, ",")
+    header = [h.strip() for h in rows[0]]
+    found = {}
+    for row in rows[1:]:
+        cells = dict(zip(header, (c.strip() for c in row)))
+        label = cells.get("De novo extracted", "")
+        parts = [{"name": m.group("name"), "percent": float(m.group("percent"))}
+                 for m in _COMPONENT.finditer(cells.get("Global NMF Signatures", ""))]
+        fit = {}
+        for key, column in (("cosine", "Cosine Similarity"), ("correlation", "Correlation"),
+                            ("l1", "L1 Error %"), ("l2", "L2 Error %"), ("kl", "KL Divergence")):
+            try:
+                fit[key] = float(cells.get(column, ""))
+            except ValueError:
+                pass
+        found[label] = {"decomposition": sorted(parts, key=lambda p: -p["percent"]), "fit": fit}
+    return found
+
+
+def cosmic_comparison(folder: Path, settings: dict) -> dict | None:
+    """For each de novo signature of the suggested solution: how it splits into
+    COSMIC signatures, and the closest single COSMIC signatures."""
+    suggested = folder / "Suggested_Solution"
+    if not _real_dir(suggested):
+        return None
+    denovo_files = sorted(suggested.glob("*_De-Novo_Solution/Signatures/*_De-Novo_Signatures.txt"))
+    if not denovo_files:
+        return None
+    labels, names, columns = _read_matrix(denovo_files[0])
+    mappings = sorted(suggested.glob("COSMIC_*_Decomposed_Solution/De_Novo_map_to_COSMIC_*.csv"))
+    decompositions = _decompositions(mappings[0]) if mappings else {}
+    catalogue, label = cosmic_catalogue(len(labels), settings)
+    signatures = []
+    for name, column in zip(names, columns):
+        mapped = next((v for k, v in decompositions.items()
+                       if k == name or k.endswith(f"-{name}") or k.endswith(f" {name}")), None)
+        signatures.append({
+            "name": name,
+            "decomposition": mapped["decomposition"] if mapped else [],
+            "fit": mapped["fit"] if mapped else {},
+            "closest": closest_cosmic(dict(zip(labels, column)), catalogue) if catalogue else [],
+        })
+    return {"catalogue": label if catalogue else None, "signatures": signatures}
+
 def _file(path: Path, root: Path, group: str) -> dict:
     stat = path.stat()
     return {"path": str(path), "name": path.name, "rel": str(path.relative_to(root)),
             "size": stat.st_size, "modified": stat.st_mtime, "group": group}
 
 
-def _context(folder: Path, root: Path) -> dict:
+def _context(folder: Path, root: Path, settings: dict | None = None) -> dict:
     chosen, ranks = _suggested_rank(folder / "All_solutions_stat.csv")
     samples = _header_names(folder / "Samples.txt")
     suggested = folder / "Suggested_Solution"
@@ -202,6 +360,7 @@ def _context(folder: Path, root: Path) -> dict:
         "denovo_signatures": _cosmic_matches(denovo) if denovo else [],
         "cosmic_signatures": _cosmic_matches(cosmic) if cosmic else [],
         "assigned": bool(cosmic),
+        "comparison": cosmic_comparison(folder, settings or {}),
         "plots": plots,
         "tables": tables,
     }
@@ -212,7 +371,8 @@ def scan(output_dir: str) -> dict:
     root = Path(output_dir).expanduser()
     if not root.is_dir():
         raise ResultsError(f"not a folder: {output_dir}")
-    contexts = [_context(folder, root) for folder in _context_dirs(root)]
+    settings = run_settings(root)
+    contexts = [_context(folder, root, settings) for folder in _context_dirs(root)]
     if not contexts and not (root / "JOB_METADATA.txt").is_file():
         raise ResultsError("This folder does not hold SigProfilerExtractor results "
                            "(no JOB_METADATA.txt and no context folders such as SBS96).")

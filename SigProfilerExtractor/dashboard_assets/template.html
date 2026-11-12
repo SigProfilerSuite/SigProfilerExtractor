@@ -10,14 +10,21 @@
 </head>
 <body>
   <header class="topbar">
-    <div>
-      <p class="product">SigProfilerExtractor</p>
-      <h1 id="projectTitle">Results dashboard</h1>
+    <div class="topbar-title">
+      <button type="button" id="sidebarToggle" class="sidebar-toggle" aria-controls="dashboardSidebar"
+              aria-expanded="true" title="Hide the panel" aria-label="Hide the panel">
+        <svg viewBox="0 0 16 16" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+          <rect x="1.75" y="2.75" width="12.5" height="10.5" rx="1.5"></rect><path d="M6 2.75v10.5"></path></svg>
+      </button>
+      <div>
+        <p class="product">SigProfilerExtractor</p>
+        <h1 id="projectTitle">Results dashboard</h1>
+      </div>
     </div>
     <div class="run-meta" id="runMeta"></div>
   </header>
   <div class="workspace">
-    <aside class="sidebar">
+    <aside class="sidebar" id="dashboardSidebar">
       <label class="field-label" for="contextSelect">Mutation context</label>
       <select id="contextSelect"></select>
       <nav class="tabs" aria-label="Dashboard views">
@@ -29,6 +36,9 @@
       </nav>
       <div id="contextSummary" class="context-summary"></div>
     </aside>
+    <div class="splitter" id="sidebarSplitter" role="separator" aria-orientation="vertical"
+         aria-controls="dashboardSidebar" tabindex="0" aria-valuemin="0" aria-valuemax="440"
+         aria-label="Panel width" title="Drag to resize the panel; double-click to hide or show it"></div>
     <main id="content" tabindex="-1"></main>
   </div>
   <dialog id="figureHelpDialog" class="help-dialog" aria-labelledby="figureHelpTitle">

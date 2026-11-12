@@ -12,6 +12,12 @@
 <div class="app" id="app">
 
   <header class="topbar">
+    <button class="btn sm icon-btn" id="sideToggle" type="button" aria-controls="sidebar"
+            aria-expanded="true" title="Hide the side panel" aria-label="Hide the side panel">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+        <rect x="1.75" y="2.75" width="12.5" height="10.5" rx="1.5"/><path d="M6 2.75v10.5"/>
+        <path class="fill" d="M2.5 3.5h2.75v9H2.5z" fill="currentColor" stroke="none"/></svg>
+    </button>
     <button class="brand linkish" id="homeBtn" type="button" title="Home">
       <span class="mark" aria-hidden="true">SE</span>
       <span class="titles">
@@ -33,7 +39,7 @@
   </header>
 
   <div class="body">
-    <nav class="sidebar" aria-label="Runs and results">
+    <nav class="sidebar" id="sidebar" aria-label="Runs and results">
       <section>
         <h3>Runs
           <button class="btn sm ghost" id="newRunBtn" title="Set up a new run">New</button>
@@ -63,6 +69,9 @@
            target="_blank" rel="noopener noreferrer">doi.org/10.1016/j.xgen.2022.100179</a>
       </footer>
     </nav>
+    <div class="splitter" id="sideSplitter" role="separator" aria-orientation="vertical"
+         aria-controls="sidebar" tabindex="0" aria-valuemin="0" aria-valuemax="560"
+         aria-label="Side panel width" title="Drag to resize the side panel; double-click to hide or show it"></div>
 
     <main class="main">
       <header>
@@ -480,6 +489,19 @@
         <div id="resultsBody" class="stack hidden">
           <div id="resNotes" class="stack-sm"></div>
           <div class="ctx-cards" id="ctxCards"></div>
+
+          <div class="card" id="compareCard">
+            <div class="hd"><h2>De novo signatures and COSMIC</h2>
+              <span class="note" id="compareNote">how each signature relates to known ones</span></div>
+            <div class="bd">
+              <p class="cmp-intro"><b>Split into COSMIC signatures</b> is SigProfilerAssignment's
+                explanation of each de novo signature as a mix of COSMIC signatures, with how
+                closely that mix reconstructs it. <b>Closest COSMIC signature</b> is the single
+                catalogue signature most similar to it by cosine similarity, where 1 means an
+                identical profile.</p>
+              <div id="compareBody"></div>
+            </div>
+          </div>
 
           <div class="card" id="dashCard">
             <div class="hd"><h2>Interactive dashboard</h2>

@@ -602,7 +602,81 @@ function render() {
   $('contextSummary').textContent = `${context.solutions.length} ranks\n${context.sample_summary.samples} samples\n${context.sample_summary.channels} channels`;
 }
 
+// The panel on the left: drag its edge to resize it, past its narrowest to
+// hide it; double-click, the arrow keys or the button beside the title also
+// work. Remembered where the browser allows it (a sandboxed frame does not).
+const PANEL = { min: 160, max: 440, standard: 220, hideBelow: 110, step: 20 };
+const panel = { width: PANEL.standard, hidden: false };
+
+function applyPanel(save) {
+  panel.width = Math.round(Math.min(PANEL.max, Math.max(PANEL.min, panel.width)));
+  document.documentElement.style.setProperty('--sidebar-w', `${panel.width}px`);
+  document.body.classList.toggle('sidebar-hidden', panel.hidden);
+  const label = panel.hidden ? 'Show the panel' : 'Hide the panel';
+  const toggle = $('sidebarToggle');
+  toggle.setAttribute('aria-expanded', String(!panel.hidden));
+  toggle.title = label;
+  toggle.setAttribute('aria-label', label);
+  const handle = $('sidebarSplitter');
+  handle.setAttribute('aria-valuenow', String(panel.hidden ? 0 : panel.width));
+  handle.setAttribute('aria-valuetext', panel.hidden ? 'hidden' : `${panel.width} pixels`);
+  if (save) {
+    try { window.localStorage.setItem('spe-dashboard-panel', JSON.stringify(panel)); } catch (error) { /* not allowed here */ }
+    // Plotly's responsive figures follow the window: tell them the room changed.
+    window.dispatchEvent(new Event('resize'));
+  }
+}
+
+function initPanel() {
+  try {
+    const saved = JSON.parse(window.localStorage.getItem('spe-dashboard-panel') || 'null');
+    if (saved && Number.isFinite(saved.width)) { panel.width = saved.width; panel.hidden = Boolean(saved.hidden); }
+  } catch (error) { /* nothing saved, or not allowed */ }
+  applyPanel(false);
+  const handle = $('sidebarSplitter');
+  $('sidebarToggle').addEventListener('click', () => { panel.hidden = !panel.hidden; applyPanel(true); });
+  handle.addEventListener('dblclick', () => { panel.hidden = !panel.hidden; applyPanel(true); });
+  handle.addEventListener('keydown', (event) => {
+    const moves = { ArrowLeft: -PANEL.step, ArrowRight: PANEL.step };
+    if (event.key in moves) {
+      event.preventDefault();
+      if (panel.hidden && event.key === 'ArrowRight') { panel.hidden = false; panel.width = PANEL.min; }
+      else if (!panel.hidden && event.key === 'ArrowLeft' && panel.width <= PANEL.min) panel.hidden = true;
+      else panel.width += moves[event.key];
+    } else if (event.key === 'Home') { event.preventDefault(); panel.hidden = true; }
+    else if (event.key === 'End') { event.preventDefault(); panel.hidden = false; panel.width = PANEL.max; }
+    else if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); panel.hidden = !panel.hidden; }
+    else return;
+    applyPanel(true);
+  });
+  handle.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    handle.setPointerCapture(event.pointerId);
+    document.body.classList.add('resizing');
+    const left = document.querySelector('.workspace').getBoundingClientRect().left;
+    const move = (moveEvent) => {
+      const width = moveEvent.clientX - left;
+      panel.hidden = width < PANEL.hideBelow;
+      if (!panel.hidden) panel.width = width;
+      applyPanel(false);
+    };
+    const up = (upEvent) => {
+      handle.releasePointerCapture(upEvent.pointerId);
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', up);
+      handle.removeEventListener('pointercancel', up);
+      document.body.classList.remove('resizing');
+      applyPanel(true);
+    };
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', up);
+    handle.addEventListener('pointercancel', up);
+  });
+}
+
 function init() {
+  initPanel();
   const initialTab = window.location.hash.slice(1);
   if (TABS.has(initialTab)) state.tab = initialTab;
   $('projectTitle').textContent = DATA.project;

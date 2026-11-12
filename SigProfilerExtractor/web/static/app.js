@@ -131,6 +131,79 @@ function applyTheme(name) {
   $('themeSel').addEventListener('change', (e) => applyTheme(e.target.value));
 })();
 
+/* ------------------------------------------------- side panel: resize, hide */
+
+// Drag the handle to set the side panel's width, or past its narrowest to hide
+// it; double-click, the arrow keys or the top-bar button also work. The width
+// and whether it is hidden are remembered by the browser.
+const SIDE = { min: 200, max: 560, standard: 280, hideBelow: 130, step: 20 };
+const side = { width: SIDE.standard, hidden: false };
+
+function applySide(save) {
+  side.width = Math.round(Math.min(SIDE.max, Math.max(SIDE.min, side.width)));
+  document.documentElement.style.setProperty('--side-w', `${side.width}px`);
+  $('app').classList.toggle('side-hidden', side.hidden);
+  const toggle = $('sideToggle');
+  const label = side.hidden ? 'Show the side panel' : 'Hide the side panel';
+  toggle.setAttribute('aria-expanded', String(!side.hidden));
+  toggle.title = label;
+  toggle.setAttribute('aria-label', label);
+  const handle = $('sideSplitter');
+  handle.setAttribute('aria-valuenow', String(side.hidden ? 0 : side.width));
+  handle.setAttribute('aria-valuetext', side.hidden ? 'hidden' : `${side.width} pixels`);
+  if (save) {
+    try { localStorage.setItem('spe-side', JSON.stringify(side)); } catch (e) { /* private mode */ }
+  }
+}
+
+(function initSide() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('spe-side') || 'null');
+    if (saved && Number.isFinite(saved.width)) { side.width = saved.width; side.hidden = !!saved.hidden; }
+  } catch (e) { /* nothing saved */ }
+  applySide(false);
+  const handle = $('sideSplitter');
+  $('sideToggle').addEventListener('click', () => { side.hidden = !side.hidden; applySide(true); });
+  handle.addEventListener('dblclick', () => { side.hidden = !side.hidden; applySide(true); });
+  handle.addEventListener('keydown', (e) => {
+    const moves = { ArrowLeft: -SIDE.step, ArrowRight: SIDE.step };
+    if (e.key in moves) {
+      e.preventDefault();
+      if (side.hidden && e.key === 'ArrowRight') { side.hidden = false; side.width = SIDE.min; }
+      else if (!side.hidden && e.key === 'ArrowLeft' && side.width <= SIDE.min) side.hidden = true;
+      else side.width += moves[e.key];
+    } else if (e.key === 'Home') { e.preventDefault(); side.hidden = true; }
+    else if (e.key === 'End') { e.preventDefault(); side.hidden = false; side.width = SIDE.max; }
+    else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); side.hidden = !side.hidden; }
+    else return;
+    applySide(true);
+  });
+  handle.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    handle.setPointerCapture(e.pointerId);
+    document.body.classList.add('resizing');
+    const left = document.querySelector('.body').getBoundingClientRect().left;
+    const move = (ev) => {
+      const width = ev.clientX - left;
+      side.hidden = width < SIDE.hideBelow;
+      if (!side.hidden) side.width = width;
+      applySide(false);
+    };
+    const up = (ev) => {
+      handle.releasePointerCapture(ev.pointerId);
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', up);
+      handle.removeEventListener('pointercancel', up);
+      document.body.classList.remove('resizing');
+      applySide(true);
+    };
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', up);
+    handle.addEventListener('pointercancel', up);
+  });
+})();
+
 /* ----------------------------------------------------------- tab router */
 
 const VIEWS = ['home', 'run', 'monitor', 'results', 'help'];
@@ -1214,6 +1287,7 @@ async function openResults(path) {
   $('resultsBody').classList.remove('hidden');
   renderResultNotes(r);
   renderContextCards(r);
+  renderComparison(r);
   renderDashboard(r);
   renderPlots(r);
   renderFiles(r);
@@ -1261,6 +1335,88 @@ function renderContextCards(r) {
     } else if (!c.assigned) bd.appendChild(el('p', 'hint', 'Not matched to COSMIC.'));
     card.appendChild(bd);
     box.appendChild(card);
+  });
+}
+
+// Okabe-Ito, then a few more: colour-blind safe, one colour per COSMIC name.
+const SPLIT_COLORS = ['#0072B2', '#E69F00', '#009E73', '#CC79A7', '#56B4E9', '#D55E00', '#F0E442',
+  '#332288', '#999933', '#882255', '#44AA99', '#888888'];
+const cosineClass = (v) => (v >= 0.9 ? 'good' : (v >= 0.8 ? 'warn' : 'flat'));
+const fmtCos = (v) => (v === undefined || v === null ? '–' : Number(v).toFixed(2));
+
+function renderComparison(r) {
+  const withData = r.contexts.filter((c) => c.comparison && c.comparison.signatures.length);
+  $('compareCard').classList.toggle('hidden', !withData.length);
+  const body = $('compareBody');
+  clear(body);
+  const catalogues = [...new Set(withData.map((c) => c.comparison.catalogue).filter(Boolean))];
+  $('compareNote').textContent = catalogues.length ? `compared with ${catalogues.join(', ')}` : 'how each signature relates to known ones';
+  withData.forEach((ctx) => {
+    const section = el('div', 'cmp-ctx');
+    if (withData.length > 1) section.appendChild(el('h3', null, ctx.name));
+    const head = el('div', 'cmp-row cmp-head');
+    ['De novo signature', 'Split into COSMIC signatures', 'Closest COSMIC signature'].forEach((t) => head.appendChild(el('div', null, t)));
+    section.appendChild(head);
+    const colorOf = new Map();
+    const color = (name) => {
+      if (!colorOf.has(name)) colorOf.set(name, SPLIT_COLORS[colorOf.size % SPLIT_COLORS.length]);
+      return colorOf.get(name);
+    };
+    ctx.comparison.signatures.forEach((sig) => {
+      const row = el('div', 'cmp-row');
+      row.dataset.signature = sig.name;
+      row.appendChild(el('div', 'cmp-name', sig.name));
+
+      const split = el('div', 'cmp-split');
+      split.dataset.label = 'Split into COSMIC signatures';
+      if (sig.decomposition.length) {
+        const bar = el('div', 'split-bar');
+        bar.setAttribute('role', 'img');
+        bar.setAttribute('aria-label', sig.decomposition.map((p) => `${p.name} ${p.percent.toFixed(1)}%`).join(', '));
+        sig.decomposition.forEach((p) => {
+          const seg = el('span');
+          seg.style.width = `${Math.max(p.percent, 0.6)}%`;
+          seg.style.background = color(p.name);
+          seg.title = `${p.name}: ${p.percent.toFixed(1)}%`;
+          bar.appendChild(seg);
+        });
+        split.appendChild(bar);
+        const legend = el('div', 'split-legend');
+        sig.decomposition.forEach((p) => {
+          const item = el('span', 'split-item');
+          const dot = el('i');
+          dot.style.background = color(p.name);
+          item.appendChild(dot);
+          item.appendChild(el('b', null, p.name));
+          item.appendChild(document.createTextNode(` ${p.percent.toFixed(1)}%`));
+          legend.appendChild(item);
+        });
+        split.appendChild(legend);
+        if (sig.fit.cosine !== undefined) {
+          const fit = el('div', 'split-fit');
+          rich(fit, ['Mix reconstructs it with cosine ', { b: fmtCos(sig.fit.cosine) }]);
+          if (sig.fit.l2 !== undefined) fit.appendChild(document.createTextNode(` · L2 error ${sig.fit.l2.toFixed(1)}%`));
+          split.appendChild(fit);
+        }
+      } else split.appendChild(el('span', 'muted', 'Not matched to COSMIC in this run.'));
+      row.appendChild(split);
+
+      const close = el('div', 'cmp-close');
+      close.dataset.label = 'Closest COSMIC signature';
+      if (sig.closest.length) {
+        const [best, ...rest] = sig.closest;
+        const top = el('div', 'close-best');
+        top.appendChild(el('b', null, best.name));
+        const p = pill(cosineClass(best.cosine), `cosine ${fmtCos(best.cosine)}`);
+        p.title = 'Cosine similarity: 1 means an identical profile; 0.9 and above is usually read as the same signature.';
+        top.appendChild(p);
+        close.appendChild(top);
+        if (rest.length) close.appendChild(el('div', 'close-rest', `then ${rest.map((m) => `${m.name} ${fmtCos(m.cosine)}`).join(', ')}`));
+      } else close.appendChild(el('span', 'muted', 'No COSMIC catalogue for this context.'));
+      row.appendChild(close);
+      section.appendChild(row);
+    });
+    body.appendChild(section);
   });
 }
 
