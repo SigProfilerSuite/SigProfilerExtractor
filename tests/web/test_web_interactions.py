@@ -471,3 +471,15 @@ def test_the_log_shows_windows_line_endings_and_keeps_the_last_progress_step(pag
     _wait_text(page.locator("#jobLog"), "last line")
     lines = page.locator("#jobLog").text_content().split("\n")
     assert lines[:4] == ["== step 1/1: working", "first line", "100% |████|", "last line"]
+
+
+@pytest.mark.parametrize("version, shown", [
+    ("1.6.1", "v1.6.1"),
+    ("1.6.1.dev5+g868d105", "v1.6.1.dev5"),
+    ("0+unknown", ""),  # setuptools_scm's fallback: show nothing rather than "v0"
+])
+def test_the_top_bar_shows_the_installed_version(page, monkeypatch, version, shown):
+    monkeypatch.setattr(server, "_package_version", lambda: version)
+    page.reload()
+    page.wait_for_selector("#exampleSel option[value='sbs96']", state="attached")
+    _wait_until(lambda: page.text_content("#envVersion") == shown)

@@ -1,0 +1,3 @@
+# GitHub fills in .git_archival.txt when it builds a zip or tarball, so a
+# download without git history still knows its version (setuptools_scm).
+.git_archival.txt  export-subst

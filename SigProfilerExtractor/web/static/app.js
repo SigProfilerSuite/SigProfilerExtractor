@@ -297,8 +297,9 @@ async function loadEnv() {
   const env = await get('/api/env');
   state.env = env;
   state.settings = env.settings;
+  // "0+unknown" is setuptools_scm's fallback when it cannot find the version.
   const v = String(env.version || '').split('+')[0];
-  $('envVersion').textContent = v ? `v${v}` : '';
+  $('envVersion').textContent = v && v !== '0' ? `v${v}` : '';
   fillChoices();
   applyGenomes(env.genomes);
   resetAdvanced();

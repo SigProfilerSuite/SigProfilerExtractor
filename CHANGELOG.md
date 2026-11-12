@@ -18,6 +18,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - The Workbench's run log on Windows shows its lines. Lines ending in `\r\n` were taken for progress-bar redraws and shown blank.
 - Checking whether a process is still running no longer sends Ctrl+C to the console on Windows, where `os.kill(pid, 0)` sends `CTRL_C_EVENT`. This could interrupt `launch_web.bat --stop`.
 - The run log no longer garbles a character that is split between two reads of the log.
+- A zip or tarball of the repository downloaded from GitHub knows its version (`.git_archival.txt`). Without git history it was `0+unknown`, and the Workbench showed "v0"; it now shows nothing if the version cannot be found.
 
 ## [1.6.0] - 2026-11-11
 
