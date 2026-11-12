@@ -7,14 +7,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-11-11
+
 ### Added
+- Add the SigProfilerExtractor Workbench, a local web app for running extractions without writing code. Start it with `SigProfilerExtractor web`, `sigprofilerextractor-web`, or the double-click launchers (`launch_web.command` on macOS, `launch_web.bat` on Windows); the first launch sets up its own environment. It runs from VCFs, a mutation matrix, structural-variant BEDPE files, or copy-number segments, checks the input before anything runs, offers Quick look and Standard presets with a live estimate of the work, follows each run's progress, and shows the suggested solution, how each de novo signature splits into COSMIC signatures and its closest COSMIC signature by cosine similarity, the interactive dashboard, and every PDF plot and table. It listens only on this computer and protects every change with a per-launch token. See the Graphical Interface page of the documentation.
+- Add double-click uninstallers (`uninstall_web.command` on macOS, `uninstall_web.bat` on Windows) that remove the Workbench's environment and run records but never results.
+- Add the `web-tests` extra for the Workbench's browser tests.
 - Generate a self-contained `reports.html` after extraction. The offline dashboard provides interactive overview, all-rank signatures, selected de novo and COSMIC solutions, sample activities, and per-rank statistics using SigProfilerPlotting's context-aware Plotly renderers.
 - Add the `make_dashboard` Python and CLI option (default: `True`) to disable dashboard generation when needed.
 - Add contextual information buttons to every dashboard figure, with guidance on its axes, metrics, interpretation, and source data.
 
 ### Changed
 - Require SigProfilerPlotting 1.5.0 or newer for its validated matrix loader and interactive rendering API.
-- Refine the dashboard with separate stability and reconstruction panels, selected-rank evidence, cohort mutation summaries, single-metric statistics plots, activity ordering and log-color controls, a color-vision-friendly heatmap, accessible table sorting, and bookmarkable view URLs.
+- Refine the dashboard with separate stability and reconstruction panels, selected-rank evidence, cohort mutation summaries, single-metric statistics plots, activity ordering and log-color controls, a color-vision-friendly heatmap, accessible table sorting, bookmarkable view URLs, and a side panel that can be resized or hidden.
 
 ## [1.5.0] - 2026-09-28
 
