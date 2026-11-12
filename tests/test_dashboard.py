@@ -109,6 +109,15 @@ class DashboardTest(unittest.TestCase):
             "standard",
         )
 
+    def test_side_panel_can_be_resized_and_hidden(self):
+        html = create_dashboard(self.output).read_text(encoding="utf-8")
+        self.assertIn('id="sidebarToggle"', html)
+        self.assertIn('aria-controls="dashboardSidebar"', html)
+        self.assertRegex(html, r'id="sidebarSplitter" role="separator" aria-orientation="vertical"')
+        # The view tabs are found as ".tabs button": the panel button must not be one.
+        tabs = re.search(r'<nav class="tabs".*?</nav>', html, re.DOTALL).group(0)
+        self.assertNotIn("sidebarToggle", tabs)
+
     def test_rejects_directory_without_completed_context(self):
         empty = Path(self.temporary.name) / "empty"
         empty.mkdir()

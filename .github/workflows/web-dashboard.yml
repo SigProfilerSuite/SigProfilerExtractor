@@ -1,0 +1,120 @@
+name: Workbench (web app)
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  # The main CI runs SigProfilerExtractor's unittest suite, which does not
+  # look inside tests/web. This job runs the Workbench's pytest suite,
+  # including the Playwright browser tests with a real Chromium.
+  browser-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install the package with test extras and Chromium
+        run: |
+          python -m pip install --upgrade pip
+          pip install ".[web-tests]"
+          python -m playwright install --with-deps chromium
+
+      - name: Web server, runner and browser tests
+        run: pytest tests/web -v -rs
+
+  launcher-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: First launch installs dependencies
+        run: |
+          chmod +x launch_web.sh
+          ./launch_web.sh --no-launch > first-run.log 2>&1 &
+          LAUNCH_PID=$!
+          for i in $(seq 1 300); do
+            grep -q "Workbench running at" first-run.log && break
+            sleep 2
+          done
+          grep -q "Workbench running at" first-run.log || (cat first-run.log; exit 1)
+          cat first-run.log
+          ./launch_web.sh --stop
+          wait $LAUNCH_PID || true
+
+      - name: Second launch installs nothing
+        run: |
+          ./launch_web.sh --no-launch > second-run.log 2>&1 &
+          LAUNCH_PID=$!
+          for i in $(seq 1 300); do
+            grep -q "Workbench running at" second-run.log && break
+            sleep 2
+          done
+          grep -q "Workbench running at" second-run.log || (cat second-run.log; exit 1)
+          cat second-run.log
+          grep -q "Dependencies already installed; skipping install." second-run.log
+          ./launch_web.sh --stop
+          wait $LAUNCH_PID || true
+
+      - name: The clickable uninstaller removes the environment
+        run: |
+          sleep 3
+          ./uninstall_web.sh --yes
+          test ! -d .venv-dashboard
+
+  launcher-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: First launch installs dependencies
+        shell: cmd
+        run: |
+          start /B cmd /C "launch_web.bat --no-launch > first-run.log 2>&1"
+          for /L %%i in (1,1,300) do (
+            findstr /C:"Workbench running at" first-run.log >nul 2>nul && goto :first_up
+            ping -n 3 127.0.0.1 >nul
+          )
+          :first_up
+          type first-run.log
+          findstr /C:"Workbench running at" first-run.log >nul || exit /b 1
+          launch_web.bat --stop
+
+      - name: Second launch installs nothing
+        shell: cmd
+        run: |
+          start /B cmd /C "launch_web.bat --no-launch > second-run.log 2>&1"
+          for /L %%i in (1,1,300) do (
+            findstr /C:"Workbench running at" second-run.log >nul 2>nul && goto :second_up
+            ping -n 3 127.0.0.1 >nul
+          )
+          :second_up
+          type second-run.log
+          findstr /C:"Workbench running at" second-run.log >nul || exit /b 1
+          findstr /C:"Dependencies already installed; skipping install." second-run.log >nul || exit /b 1
+          launch_web.bat --stop
+
+      - name: The clickable uninstaller removes the environment
+        shell: cmd
+        run: |
+          ping -n 6 127.0.0.1 >nul
+          call uninstall_web.bat --yes
+          if exist .venv-dashboard exit /b 1

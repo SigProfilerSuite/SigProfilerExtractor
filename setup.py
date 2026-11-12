@@ -37,11 +37,16 @@ setup(
     license="UCSD",
     packages=find_namespace_packages(include=["SigProfilerExtractor*"]),
     install_requires=INSTALL_REQUIRES,
+    extras_require={
+        # Browser tests of the Workbench (tests/web/test_web_interactions.py).
+        "web-tests": ["pytest", "playwright"],
+    },
     include_package_data=True,
     python_requires=">=3.9",
     entry_points={
         "console_scripts": [
             "SigProfilerExtractor=SigProfilerExtractor.sigprofilerextractor_cli:main_function",
+            "sigprofilerextractor-web=SigProfilerExtractor.web.launcher:main",
         ],
     },
     zip_safe=False,

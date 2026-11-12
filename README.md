@@ -8,12 +8,18 @@ The tool identifies the number of operative mutational signatures, their activit
 for each signature to cause a specific mutation type in a cancer sample. The tool makes use of SigProfilerMatrixGenerator 
 and SigProfilerPlotting.
 
+**Prefer not to write code?** SigProfilerExtractor also has a graphical interface, the
+**SigProfilerExtractor Workbench**: double-click to install and start it on macOS or Windows,
+set up a run in your browser, and explore the results in an interactive dashboard. See
+[Graphical interface](#web_app).
+
 ## Documentation
 
 Full documentation is available in `docs/` (rendered via MkDocs): https://sigprofilersuite.github.io/SigProfilerExtractor/
 
 # Table of contents
 - [Installation](#installation)
+- [Graphical interface (Workbench)](#web_app)
 - [Functions](#functions)
   - [importdata](#importdata)
   - [sigProfilerExtractor](#sigProfilerExtractor)
@@ -52,7 +58,61 @@ genInstall.install('GRCh37')
 
 This will install the human 37 assembly as a reference genome. You may install as many genomes as you wish.
 
-Next, open a python interpreter and import the SigProfilerExtractor module. Please see the examples of the functions. 
+Next, open a python interpreter and import the SigProfilerExtractor module. Please see the examples of the functions.
+
+## <a name="web_app"></a> Graphical interface: the SigProfilerExtractor Workbench
+
+The Workbench runs SigProfilerExtractor from your browser, without writing code. It runs
+entirely on your own computer: your data never leaves it.
+
+![The SigProfilerExtractor Workbench](https://raw.githubusercontent.com/SigProfilerSuite/SigProfilerExtractor/master/docs/assets/images/web-app/home.png)
+
+- **Any input SigProfilerExtractor takes:** a folder of VCF files (matrices are built for
+  you), a mutation matrix (SBS, DBS, ID, CNV or SV), structural variants (BEDPE) or
+  copy-number segments. Each input is checked before anything runs.
+- **Clear settings:** a *Quick look* preset (a few minutes) and the published *Standard*
+  setting, a live estimate of the work, every other parameter under Advanced with its
+  default, and bundled examples to try with one click.
+- **Live progress** for each mutation type: the number of signatures being tried, the
+  replicate, the COSMIC step and the time left.
+- **Results:** the suggested solution for each mutation type; how each de novo signature
+  splits into COSMIC signatures and its closest COSMIC signature by cosine similarity;
+  SigProfilerExtractor's interactive dashboard (`reports.html`); every PDF plot and every
+  table.
+- **The same results as code:** it calls the same function as Python and the command line,
+  with the same defaults, and writes the same files.
+
+### Install and start with a double-click
+
+Download or clone this repository, then double-click the launcher in its folder:
+
+| System | Start | Uninstall |
+|---|---|---|
+| macOS | `launch_web.command` | `uninstall_web.command` |
+| Windows | `launch_web.bat` | `uninstall_web.bat` |
+| Linux | `./launch_web.sh` in a terminal | `./uninstall_web.sh` |
+
+- The only requirement is **Python 3.9 or newer** ([python.org](https://www.python.org/downloads/)).
+- The first start creates a private Python environment, `.venv-dashboard`, inside this
+  folder and installs SigProfilerExtractor into it. This takes a few minutes (PyTorch is
+  large) and happens once. Nothing is installed anywhere else on the computer.
+- The Workbench then opens in your browser. **Quit**, in its top bar, stops it.
+- macOS may say it cannot verify the file the first time: right-click it and choose
+  **Open**. On Windows, if SmartScreen appears, click **More info**, then **Run anyway**.
+
+If SigProfilerExtractor is already installed with pip, `SigProfilerExtractor web` (or
+`sigprofilerextractor-web`) starts the Workbench from that installation instead.
+
+### Uninstall with a double-click
+
+Click **Quit** in the Workbench, then double-click `uninstall_web.command` (macOS) or
+`uninstall_web.bat` (Windows). It lists what it will remove and asks first. It removes
+the Workbench's Python environment (including any reference genome installed through the
+Workbench) and its run records. It keeps your results and this folder; delete those
+yourself if you no longer need them.
+
+The [Workbench guide](https://sigprofilersuite.github.io/SigProfilerExtractor/7.%20Web%20App.html)
+covers every screen in detail.
 
 ## <a name="functions"></a> Functions
 The list of available functions are:

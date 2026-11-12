@@ -2,6 +2,12 @@
 
 SigProfilerExtractor is a [python][1] framework that allows de novo extraction of mutational signatures from data generated in a matrix format. The tool identifies the number of operative mutational signatures, their activities in each sample, and the probability for each signature to cause a specific mutation type in a cancer sample. The tool makes use of [SigProfilerMatrixGenerator][2] and [SigProfilerPlotting][3], seamlessly integrating with other [SigProfiler][4] tools.
 
+!!! tip "Prefer not to write code?"
+    The [SigProfilerExtractor Workbench](7. Web App.md) runs the tool from your browser.
+    Double-click to install and start it on macOS or Windows, set up a run with clear
+    presets, follow its progress, and explore the results in an interactive dashboard.
+    A double-click uninstalls it too.
+
 ----------
 
 ### Citation ###

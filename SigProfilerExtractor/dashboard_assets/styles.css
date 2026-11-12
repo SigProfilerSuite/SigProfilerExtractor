@@ -46,7 +46,21 @@ h1 { margin: 0; font-size: 20px; line-height: 1.2; }
 h2 { margin: 0; font-size: 18px; }
 h3 { margin: 0; font-size: 15px; }
 .run-meta { color: var(--muted); font-size: 12px; text-align: right; line-height: 1.5; }
-.workspace { min-height: calc(100vh - 72px); display: grid; grid-template-columns: 220px minmax(0, 1fr); }
+.workspace { min-height: calc(100vh - 72px); display: grid; grid-template-columns: var(--sidebar-w, 220px) 0 minmax(0, 1fr); }
+.workspace > .sidebar { grid-column: 1; grid-row: 1; }
+.workspace > .splitter { grid-column: 2; grid-row: 1; }
+.workspace > main { grid-column: 3; grid-row: 1; }
+body.sidebar-hidden .workspace { grid-template-columns: 0 0 minmax(0, 1fr); }
+body.sidebar-hidden .sidebar { display: none; }
+.splitter { position: relative; z-index: 5; width: 10px; margin-left: -5px; cursor: col-resize; touch-action: none; outline: none; }
+.splitter::after { content: ""; position: absolute; top: 0; bottom: 0; left: 4px; width: 2px; background: transparent; transition: background 0.15s; }
+.splitter:hover::after, .splitter:focus-visible::after, body.resizing .splitter::after { background: var(--teal); }
+body.sidebar-hidden .splitter { margin-left: 0; width: 8px; }
+body.sidebar-hidden .splitter::after { left: 0; width: 3px; background: var(--line); }
+body.resizing { cursor: col-resize; user-select: none; }
+.topbar-title { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.sidebar-toggle { display: inline-grid; place-items: center; width: 32px; height: 30px; padding: 0; border-radius: 4px; flex: none; color: var(--muted); }
+.sidebar-toggle:hover { color: var(--teal); border-color: var(--teal); }
 .sidebar {
   border-right: 1px solid var(--line);
   background: #f7f8f8;
@@ -203,6 +217,9 @@ pre { max-height: 320px; overflow: auto; background: #f5f6f7; padding: 12px; bor
 .hidden { display: none !important; }
 @media (max-width: 980px) {
   .workspace { grid-template-columns: minmax(0, 1fr); }
+  .workspace > .sidebar, .workspace > main { grid-column: 1; grid-row: auto; }
+  .splitter, .sidebar-toggle { display: none; }
+  body.sidebar-hidden .sidebar { display: block; }
   .sidebar { min-width: 0; position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--line); }
   .tabs { grid-template-columns: repeat(5, minmax(110px, 1fr)); overflow-x: auto; }
   .context-summary { display: none; }
