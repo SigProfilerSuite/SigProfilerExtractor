@@ -1,0 +1,234 @@
+
+************** Reported Current Memory Use: 0.38 GB *****************
+
+Extracting signature 1 for mutation type 96
+The matrix normalizing cutoff is 11723
+
+
+process 1 continues please wait... 
+execution time: 1 seconds 
+
+process 1 continues please wait... 
+execution time: 1 seconds 
+
+process 1 continues please wait... 
+execution time: 1 seconds 
+
+process 1 continues please wait... 
+execution time: 1 seconds 
+
+process 1 continues please wait... 
+execution time: 1 seconds 
+
+process 1 continues please wait... 
+execution time: 1 seconds 
+
+process 1 continues please wait... 
+execution time: 1 seconds 
+
+process 1 continues please wait... 
+execution time: 1 seconds 
+
+process 1 continues please wait... 
+execution time: 1 seconds 
+
+process 1 continues please wait... 
+execution time: 2 seconds 
+
+Time taken to collect 10 iterations for 1 signatures is 8.55 seconds
+Optimization time is 4.851349830627441 seconds
+The reconstruction error is 0.7126, average process stability is 1.0 and 
+the minimum process stability is 1.0 for 1 signatures
+
+
+Extracting signature 2 for mutation type 96
+The matrix normalizing cutoff is 11723
+
+
+process 2 continues please wait... 
+execution time: 1 seconds 
+
+process 2 continues please wait... 
+execution time: 1 seconds 
+
+process 2 continues please wait... 
+execution time: 1 seconds 
+
+process 2 continues please wait... 
+execution time: 1 seconds 
+
+process 2 continues please wait... 
+execution time: 1 seconds 
+
+process 2 continues please wait... 
+execution time: 1 seconds 
+
+process 2 continues please wait... 
+execution time: 1 seconds 
+
+process 2 continues please wait... 
+execution time: 2 seconds 
+
+process 2 continues please wait... 
+execution time: 2 seconds 
+
+process 2 continues please wait... 
+execution time: 3 seconds 
+
+Time taken to collect 10 iterations for 2 signatures is 9.72 seconds
+Optimization time is 4.7307288646698 seconds
+The reconstruction error is 0.0626, average process stability is 1.0 and 
+the minimum process stability is 1.0 for 2 signatures
+
+
+Extracting signature 3 for mutation type 96
+The matrix normalizing cutoff is 11723
+
+
+process 3 continues please wait... 
+execution time: 2 seconds 
+
+process 3 continues please wait... 
+execution time: 2 seconds 
+
+process 3 continues please wait... 
+execution time: 2 seconds 
+
+process 3 continues please wait... 
+execution time: 2 seconds 
+
+process 3 continues please wait... 
+execution time: 2 seconds 
+
+process 3 continues please wait... 
+execution time: 3 seconds 
+
+process 3 continues please wait... 
+execution time: 3 seconds 
+
+process 3 continues please wait... 
+execution time: 3 seconds 
+
+process 3 continues please wait... 
+execution time: 3 seconds 
+
+process 3 continues please wait... 
+execution time: 3 seconds 
+
+Time taken to collect 10 iterations for 3 signatures is 10.14 seconds
+Optimization time is 4.890993118286133 seconds
+The reconstruction error is 0.0629, average process stability is 0.98 and 
+the minimum process stability is 0.97 for 3 signatures
+
+
+Extracting signature 4 for mutation type 96
+The matrix normalizing cutoff is 11723
+
+
+process 4 continues please wait... 
+execution time: 1 seconds 
+
+process 4 continues please wait... 
+execution time: 2 seconds 
+
+process 4 continues please wait... 
+execution time: 2 seconds 
+
+process 4 continues please wait... 
+execution time: 3 seconds 
+
+process 4 continues please wait... 
+execution time: 4 seconds 
+
+process 4 continues please wait... 
+execution time: 5 seconds 
+
+process 4 continues please wait... 
+execution time: 6 seconds 
+
+process 4 continues please wait... 
+execution time: 6 seconds 
+
+process 4 continues please wait... 
+execution time: 7 seconds 
+
+process 4 continues please wait... 
+execution time: 8 seconds 
+
+Time taken to collect 10 iterations for 4 signatures is 14.12 seconds
+Optimization time is 4.9355669021606445 seconds
+The reconstruction error is 0.0236, average process stability is 0.96 and 
+the minimum process stability is 0.89 for 4 signatures
+
+
+Extracting signature 5 for mutation type 96
+The matrix normalizing cutoff is 11723
+
+
+process 5 continues please wait... 
+execution time: 3 seconds 
+
+process 5 continues please wait... 
+execution time: 3 seconds 
+
+process 5 continues please wait... 
+execution time: 3 seconds 
+
+process 5 continues please wait... 
+execution time: 3 seconds 
+
+process 5 continues please wait... 
+execution time: 4 seconds 
+
+process 5 continues please wait... 
+execution time: 4 seconds 
+
+process 5 continues please wait... 
+execution time: 6 seconds 
+
+process 5 continues please wait... 
+execution time: 7 seconds 
+
+process 5 continues please wait... 
+execution time: 7 seconds 
+
+process 5 continues please wait... 
+execution time: 8 seconds 
+
+Time taken to collect 10 iterations for 5 signatures is 13.87 seconds
+Optimization time is 4.865973949432373 seconds
+The reconstruction error is 0.02, average process stability is 0.73 and 
+the minimum process stability is -0.06 for 5 signatures
+
+
+
+ De Novo Fitting .....
+[Parallel(n_jobs=14)]: Using backend LokyBackend with 14 concurrent workers.
+[Parallel(n_jobs=14)]: Done   4 out of  21 | elapsed:    2.5s remaining:   10.4s
+[Parallel(n_jobs=14)]: Done   9 out of  21 | elapsed:    2.5s remaining:    3.3s
+[Parallel(n_jobs=14)]: Done  14 out of  21 | elapsed:    2.5s remaining:    1.2s
+[Parallel(n_jobs=14)]: Done  19 out of  21 | elapsed:    2.5s remaining:    0.3s
+[Parallel(n_jobs=14)]: Done  21 out of  21 | elapsed:    2.6s finished
+
+ Decomposing De Novo Signatures  .....
+Generating plots for COSMIC_v3.6_SBS_GRCh37 now...
+Plots for COSMIC_v3.6_SBS_GRCh37 have been successfully installed.
+Decompositon Plot:SBS96A |▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉| 1/1 [100%] in 0.0s (30150.70/s) 
+Decompositon Plot:SBS96B |▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉| 1/1 [100%] in 0.0s (37265.88/s) 
+Decompositon Plot:SBS96C |▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉| 1/1 [100%] in 0.0s (42933.36/s) 
+
+ Assigning decomposed signature
+[Parallel(n_jobs=14)]: Using backend LokyBackend with 14 concurrent workers.
+[Parallel(n_jobs=14)]: Done   4 out of  21 | elapsed:    0.0s remaining:    0.2s
+[Parallel(n_jobs=14)]: Done   9 out of  21 | elapsed:    0.1s remaining:    0.1s
+[Parallel(n_jobs=14)]: Done  14 out of  21 | elapsed:    0.1s remaining:    0.0s
+[Parallel(n_jobs=14)]: Done  19 out of  21 | elapsed:    0.1s remaining:    0.0s
+[Parallel(n_jobs=14)]: Done  21 out of  21 | elapsed:    0.1s finished
+
+Interactive results dashboard: /tmp/spe_run/reports.html
+
+
+ 
+Your Job Is Successfully Completed! Thank You For Using SigProfilerExtractor.
+ 
+WALL 176.3s

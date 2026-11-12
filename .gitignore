@@ -143,3 +143,6 @@ SigProfilerExtractor/data/VCFInput/output/
 
 # Workbench launcher environment
 .venv-dashboard/
+
+# Real SigProfilerExtractor output, captured for tests/web/test_progress.py
+!tests/web/fixtures/logs/*.log

@@ -1019,13 +1019,22 @@ $('deleteGo').addEventListener('click', async () => {
     toast(r.removed ? `Deleted ${job.name} and its results.` : `Deleted ${job.name}.`);
   } catch (e) { $('deleteGo').disabled = false; toast(e.message); }
 });
-$('hideBtn').addEventListener('click', () => { if (state.job) removeFromList(state.job); });
-$('deleteBtn').addEventListener('click', () => { if (state.job) askDelete(state.job); });
+// The run the Monitor shows; fetched if its first status poll has not come back.
+async function currentJob() {
+  if (state.job && state.job.id === state.jobId) return state.job;
+  if (!state.jobId) return null;
+  try { return (await get(`/api/jobs/${state.jobId}`)).job; } catch (e) { return null; }
+}
+$('hideBtn').addEventListener('click', async () => { const job = await currentJob(); if (job) removeFromList(job); });
+$('deleteBtn').addEventListener('click', async () => { const job = await currentJob(); if (job) askDelete(job); });
 
 /* --------------------------------------------------------------- monitor */
 
 function selectJob(id) {
   state.jobId = id;
+  // Known at once from the Runs list, so Remove and Delete work before the
+  // first status poll comes back.
+  state.job = state.jobs.find((j) => j.id === id) || null;
   state.logOffset = 0;
   state.logTail = '';
   clear($('jobLog'));

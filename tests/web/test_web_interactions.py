@@ -283,3 +283,33 @@ def test_phone_width_has_no_horizontal_overflow(dashboard_url):
 def test_every_theme_applies(page, theme):
     page.select_option("#themeSel", theme)
     assert page.get_attribute("html", "data-theme") == theme
+
+
+def test_delete_works_before_the_runs_first_status_arrives(page, tmp_path):
+    # On a slow machine the Monitor's first status poll can arrive after the
+    # user clicks Delete; the button must not depend on it.
+    page.click("#tab-run")
+    _matrix_input(page)
+    page.fill("#outputPath", str(tmp_path / "run"))
+    page.dispatch_event("#outputPath", "input")
+    _wait_until(lambda: not page.is_disabled("#startBtn"))
+    page.click("#startBtn")
+    _wait_text(page.locator("#jobPill"), "done")
+    # Removing it from the list and undoing that clears the Monitor's run, as
+    # in the run-list test this came from.
+    row = page.locator("#jobList .runrow").first
+    row.hover()
+    row.locator("button.rm.hide").click()
+    _wait_until(lambda: page.locator("#jobList .runrow").count() == 0)
+    page.click("#toastAction")
+    page.locator("#jobList .runrow").first.wait_for()
+
+    def slow_status(route):
+        time.sleep(3)
+        route.continue_()
+
+    page.route(lambda url: "/api/jobs/" in url and url.rstrip("/").count("/") == 5 and "?" not in url,
+               slow_status)
+    page.locator("#jobList .runrow .item").first.click()
+    page.click("#deleteBtn")
+    page.wait_for_selector("#deleteDialog[open]", timeout=2000)
