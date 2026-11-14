@@ -1,0 +1,67 @@
+:root {
+  /* The Workbench's own font stack (its --ui), so both pages match. */
+  --ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --bg: #f6f5f8; --card: #ffffff; --text: #1d1a22; --muted: #5f5868; --line: #e1dde6;
+  --accent: #46166b; --accent-text: #ffffff; --ok: #1f7a3a; --bad: #b3261e; --track: #ebe7f0;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #17151b; --card: #211e26; --text: #ece9f0; --muted: #a8a1b2; --line: #36313d;
+    --accent: #b48ee0; --accent-text: #17151b; --ok: #6cc785; --bad: #f2867d; --track: #36313d;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 15px/1.5 var(--ui); }
+header { display: flex; flex-wrap: wrap; gap: 8px 24px; align-items: baseline;
+  justify-content: space-between; padding: 20px 16px 4px; max-width: 920px; margin: 0 auto; }
+h1 { font-size: 22px; margin: 0; }
+h2 { font-size: 17px; margin: 0 0 6px; }
+a { color: var(--accent); }
+main { max-width: 920px; margin: 0 auto; padding: 8px 16px 48px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+  padding: 18px; margin-top: 16px; }
+.hint, .empty { color: var(--muted); margin: 0 0 12px; }
+.field { display: block; font-weight: 600; margin-bottom: 12px; }
+input[type=text], input[type=password] { display: block; width: 100%; margin-top: 4px;
+  padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg);
+  color: var(--text); font: 14px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.drop { border: 2px dashed var(--line); border-radius: 10px; padding: 20px; text-align: center; }
+.drop.over { border-color: var(--accent); }
+.drop p { margin: 0 0 10px; color: var(--muted); }
+.buttons { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
+.button, button { display: inline-block; padding: 8px 14px; border: 0; border-radius: 6px;
+  background: var(--accent); color: var(--accent-text); font: 600 14px var(--ui);
+  cursor: pointer; text-decoration: none; white-space: nowrap; }
+.button.secondary, button.secondary { background: transparent; color: var(--accent);
+  border: 1px solid var(--accent); }
+button:disabled { opacity: .5; cursor: default; }
+.progress { margin-top: 14px; }
+.bar { height: 8px; background: var(--track); border-radius: 4px; overflow: hidden; }
+.bar span { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+.progress p { margin: 6px 0 0; color: var(--muted); font-size: 13px; }
+.done { margin-top: 14px; }
+.done .bad { color: var(--bad); }
+.pathrow { display: flex; gap: 8px; align-items: center; margin: 6px 0; }
+.pathrow input { margin: 0; }
+.list .item { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center;
+  justify-content: space-between; padding: 10px 0; border-top: 1px solid var(--line); }
+.list .item:first-child { border-top: 0; }
+.item .what { min-width: 0; flex: 1 1 320px; }
+.item .name { font-weight: 600; }
+.item .meta { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.item .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.status { font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 999px;
+  border: 1px solid currentColor; margin-left: 6px; }
+.status.finished, .status.done, .status.succeeded { color: var(--ok); }
+.status.failed, .status.stopped { color: var(--bad); }
+.status.running { color: var(--accent); }
+.row { display: flex; gap: 8px; }
+.row input { margin: 0; flex: 1; }
+.login main { max-width: 420px; padding-top: 12vh; }
+.login form { display: flex; flex-direction: column; gap: 10px; }
+.login .bad { color: var(--bad); }
+code { font-size: 13px; }
+@media (max-width: 560px) { .row, .pathrow { flex-direction: column; align-items: stretch; } }

@@ -1,0 +1,85 @@
+/* Job-resources panel and Upload & download button added to the Workbench
+   page, and the same details on the upload page. Everything is scoped under
+   #spe-gw, #spe-gw-panel, #job-card or .spe-* so none of it touches the
+   Workbench's own styles. */
+#spe-gw, #spe-gw-panel, #job-card {
+  --spe-bg: #ffffff; --spe-text: #1d1a22; --spe-muted: #5f5868; --spe-line: #e1dde6;
+  --spe-accent: #46166b; --spe-accent-text: #ffffff; --spe-track: #ebe7f0; --spe-high: #b3261e;
+  /* The Workbench's own UI font where there is one (its --ui), else the system font. */
+  --spe-font: var(--ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif);
+}
+@media (prefers-color-scheme: dark) {
+  #spe-gw, #spe-gw-panel, #job-card {
+    --spe-bg: #211e26; --spe-text: #ece9f0; --spe-muted: #a8a1b2; --spe-line: #36313d;
+    --spe-accent: #b48ee0; --spe-accent-text: #17151b; --spe-track: #36313d; --spe-high: #f2867d;
+  }
+}
+
+/* Bottom right: Upload & download (and, only if the Workbench has no "ready"
+   pill to use, a resources pill of our own). */
+#spe-gw {
+  position: fixed; right: 16px; bottom: 16px; z-index: 2147483646;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 8px;
+  max-width: calc(100vw - 32px); font: 13px/1.4 var(--spe-font);
+}
+#spe-gw .spe-row { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+#spe-gw .spe-pill, #spe-gw .spe-gw-files {
+  padding: 8px 14px; border-radius: 999px; font: 600 13px/1.2 var(--spe-font);
+  text-decoration: none; cursor: pointer; box-shadow: 0 2px 8px rgba(0, 0, 0, .25);
+  white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis;
+}
+#spe-gw .spe-pill { background: var(--spe-bg); color: var(--spe-text); border: 1px solid var(--spe-line); }
+#spe-gw .spe-gw-files { background: var(--spe-accent); color: var(--spe-accent-text); border: 1px solid transparent; }
+#spe-gw .spe-pill:focus-visible, #spe-gw .spe-gw-files:focus-visible { outline: 2px solid var(--spe-accent); outline-offset: 2px; }
+
+/* The Workbench's "ready" pill, made the panel's trigger. */
+.spe-trigger { cursor: pointer; }
+.spe-trigger:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+
+/* The details panel: under the "ready" pill, or above the bottom-right row. */
+#spe-gw-panel {
+  width: 420px; max-width: calc(100vw - 32px); max-height: 70vh; overflow: auto; padding: 14px 16px;
+  background: var(--spe-bg); color: var(--spe-text); border: 1px solid var(--spe-line);
+  border-radius: 10px; box-shadow: 0 6px 24px rgba(0, 0, 0, .25);
+  font: 13px/1.4 var(--spe-font); text-align: left;
+}
+#spe-gw-panel.spe-top { position: fixed; right: 16px; top: 56px; z-index: 2147483647; }
+#spe-gw-panel[hidden] { display: none; }
+#spe-gw-panel .spe-title { font: 600 15px/1.3 var(--spe-font); margin: 0 0 8px; color: var(--spe-text); }
+
+#spe-gw-panel .spe-grid, #job-card .spe-grid {
+  display: grid; grid-template-columns: max-content 1fr; gap: 8px 14px; align-items: start;
+}
+#spe-gw-panel .spe-label, #job-card .spe-label { font-weight: 600; color: var(--spe-text); }
+#spe-gw-panel .spe-value, #job-card .spe-value { color: var(--spe-text); overflow-wrap: anywhere; min-width: 0; }
+#spe-gw-panel .spe-bar, #job-card .spe-bar {
+  height: 6px; margin-top: 4px; border-radius: 3px; background: var(--spe-track); overflow: hidden;
+}
+#spe-gw-panel .spe-bar span, #job-card .spe-bar span {
+  display: block; height: 100%; background: var(--spe-accent); transition: width .3s;
+}
+#spe-gw-panel .spe-bar span.high, #job-card .spe-bar span.high { background: var(--spe-high); }
+#spe-gw-panel .spe-gauge, #job-card .spe-gauge { margin-top: 4px; }
+#spe-gw-panel .spe-gauge:first-child, #job-card .spe-gauge:first-child { margin-top: 0; }
+#spe-gw-panel .spe-spark, #job-card .spe-spark {
+  display: block; width: 100%; height: 26px; margin-top: 3px;
+  background: var(--spe-track); border-radius: 3px;
+}
+#spe-gw-panel .spe-spark .line, #job-card .spe-spark .line {
+  fill: none; stroke: var(--spe-accent); stroke-width: 1.5; vector-effect: non-scaling-stroke;
+  stroke-linejoin: round;
+}
+#spe-gw-panel .spe-spark .area, #job-card .spe-spark .area { fill: var(--spe-accent); opacity: .18; }
+#spe-gw-panel .spe-spark.high .line, #job-card .spe-spark.high .line { stroke: var(--spe-high); }
+#spe-gw-panel .spe-spark.high .area, #job-card .spe-spark.high .area { fill: var(--spe-high); }
+#spe-gw-panel .spe-note, #job-card .spe-note { margin: 10px 0 0; color: var(--spe-muted); font-size: 12px; }
+#job-card { font-size: 14px; }
+
+/* The cap note under the Workbench's CPU fields: its own "hint" class styles
+   it; only the over-limit state is added here. */
+.spe-limit.warn { color: #b3261e; font-weight: 600; }
+
+@media (max-width: 480px) {
+  #spe-gw-panel .spe-grid, #job-card .spe-grid { grid-template-columns: 1fr; gap: 2px; }
+  #spe-gw-panel .spe-value, #job-card .spe-value { margin-bottom: 6px; }
+}

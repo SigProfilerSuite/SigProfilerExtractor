@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Workbench Files</title>
+<link rel="stylesheet" href="/gateway/files.css">
+<link rel="stylesheet" href="/gateway/status.css">
+<script src="/gateway/files.js" defer></script>
+<script src="/gateway/status.js" defer></script>
+</head>
+<body>
+<header>
+  <h1>Upload &amp; download</h1>
+  <a href="/" class="back">← Back to the Workbench</a>
+</header>
+<main>
+
+<section class="card">
+  <h2>Resources</h2>
+  <div id="job-card"><p class="empty">Loading…</p></div>
+</section>
+
+<section class="card">
+  <h2>Upload inputs to the server</h2>
+  <p class="hint">Upload a mutation matrix or segmentation file, or a whole folder of VCF or
+    BEDPE files. Then paste the path shown below into the Workbench's <b>Input</b> card and
+    press Enter.</p>
+  <label class="field">Folder name on the server
+    <input id="folder" type="text" spellcheck="false" autocomplete="off">
+  </label>
+  <div id="drop" class="drop" tabindex="0">
+    <p>Drop files here, or</p>
+    <div class="buttons">
+      <label class="button">Choose files<input id="pick-files" type="file" multiple hidden></label>
+      <label class="button">Choose a folder<input id="pick-folder" type="file" webkitdirectory multiple hidden></label>
+    </div>
+  </div>
+  <div id="progress" class="progress" hidden>
+    <div class="bar"><span id="bar"></span></div>
+    <p id="progress-text"></p>
+  </div>
+  <div id="done" class="done" hidden></div>
+</section>
+
+<section class="card">
+  <h2>Results of Workbench runs</h2>
+  <p class="hint">Each run's whole output folder, as one .zip. Single files and the
+    dashboard can also be downloaded from the Workbench's Results tab.</p>
+  <div id="runs" class="list"><p class="empty">Loading…</p></div>
+</section>
+
+<section class="card">
+  <h2>Uploaded folders</h2>
+  <div id="uploads" class="list"><p class="empty">Loading…</p></div>
+</section>
+
+<section class="card">
+  <h2>Any other folder</h2>
+  <form id="any" class="row">
+    <input id="any-path" type="text" spellcheck="false" placeholder="/network/rit/lab/…/my_results"
+           aria-label="Folder path on the server">
+    <button type="submit">Download .zip</button>
+  </form>
+</section>
+
+</main>
+</body>
+</html>

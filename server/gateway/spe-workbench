@@ -1,0 +1,286 @@
+#!/bin/bash
+#
+# spe-workbench -- run the SigProfilerExtractor Workbench on this server and
+# use it from the browser on your own computer.
+#
+#   ./spe-workbench start        start it and print the link (first time: downloads the image)
+#   ./spe-workbench url          print the link again
+#   ./spe-workbench status       is it running?
+#   ./spe-workbench logs         follow its log
+#   ./spe-workbench stop         stop it, and any run in progress
+#   ./spe-workbench update       get the newest image and restart
+#   ./spe-workbench new-token    make a new link; the old one stops working
+#
+# Options (start; --data also for the other commands):
+#   --data DIR      uploads, results, genomes and the link  (default ~/sigprofiler-workbench)
+#   --port N        port to open                            (default 8765)
+#   --cpus N        CPUs the app may use                    (default all)
+#   --memory SIZE   memory limit, e.g. 64g                  (Docker and Podman)
+#   --no-gpu        do not give it the GPUs
+#   --image NAME    image to run                            (default mishugeb/sigprofilerextractor-workbench)
+#
+# Uses Docker or Podman when you can run them, else Apptainer or Singularity
+# (usual on clusters, where Docker is not allowed). Files under your home
+# folder keep the same paths inside the app, so you can paste them as they are.
+
+set -euo pipefail
+
+IMAGE="${SPE_IMAGE:-mishugeb/sigprofilerextractor-workbench}"
+NAME="spe-workbench"
+DATA="${SPE_DATA_DIR:-${HOME}/sigprofiler-workbench}"
+PORT=8765
+CPUS=""
+MEMORY=""
+GPU=1
+
+die() { echo "spe-workbench: $*" >&2; exit 1; }
+say() { echo "spe-workbench: $*"; }
+
+usage() { sed -n '3,25p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+
+# ------------------------------------------------------------------ arguments
+
+COMMAND="${1:-}"
+[[ -n "${COMMAND}" ]] || usage 1
+shift
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --data)    DATA="$2"; shift 2 ;;
+        --port)    PORT="$2"; shift 2 ;;
+        --cpus)    CPUS="$2"; shift 2 ;;
+        --memory)  MEMORY="$2"; shift 2 ;;
+        --no-gpu)  GPU=0; shift ;;
+        --image)   IMAGE="$2"; shift 2 ;;
+        -h|--help) usage 0 ;;
+        *)         die "unknown option: $1 (see --help)" ;;
+    esac
+done
+[[ "${PORT}" =~ ^[0-9]+$ ]] || die "--port must be a number"
+mkdir -p "${DATA}"
+DATA="$(cd "${DATA}" && pwd -P)"
+STATE="${DATA}/.workbench"
+mkdir -p "${STATE}"
+SETTINGS="${STATE}/launch.env"
+
+HOST_FQDN="$(hostname -f 2>/dev/null || hostname)"
+
+# ------------------------------------------------------------------ engines
+
+pick_engine() {
+    if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then echo docker
+    elif command -v podman >/dev/null 2>&1 && podman info >/dev/null 2>&1; then echo podman
+    elif command -v apptainer >/dev/null 2>&1; then echo apptainer
+    elif command -v singularity >/dev/null 2>&1; then echo singularity
+    else
+        die "no container engine you can use here (Docker, Podman, Apptainer or Singularity).
+  Docker installed but refusing you? Ask an admin to add you to the 'docker' group,
+  or use Apptainer, which needs no special rights."
+    fi
+}
+
+# nvidia-smi -L succeeds even when it finds no GPU, so look for one listed.
+has_gpu() { [[ "${GPU}" == 1 ]] && command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L 2>/dev/null | grep -q '^GPU '; }
+
+port_open() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
+
+is_running() {
+    case "${ENGINE}" in
+        docker|podman)
+            [[ "$("${ENGINE}" inspect -f '{{.State.Running}}' "${NAME}" 2>/dev/null)" == true ]] ;;
+        *)
+            [[ -s "${STATE}/server.pid" ]] && kill -0 "$(<"${STATE}/server.pid")" 2>/dev/null ;;
+    esac
+}
+
+save_settings() {
+    cat > "${SETTINGS}" <<EOF
+ENGINE=${ENGINE}
+PORT=${PORT}
+CPUS=${CPUS}
+MEMORY=${MEMORY}
+GPU=${GPU}
+IMAGE=${IMAGE}
+EOF
+}
+
+# The last start's settings, for stop/status/update/new-token.
+load_settings() {
+    if [[ -s "${SETTINGS}" ]]; then
+        # shellcheck disable=SC1090
+        source "${SETTINGS}"
+    else
+        ENGINE="$(pick_engine)"
+    fi
+}
+
+# ------------------------------------------------------------------ start / stop
+
+start_container() {  # docker or podman
+    local args=(run -d --name "${NAME}" --restart unless-stopped
+                -p "${PORT}:${PORT}"
+                -e SPE_PORT="${PORT}" -e SPE_DATA="${DATA}"
+                -e SPE_HOST_NAME="${HOST_FQDN}" -e SPE_SSH_USER="${USER}"
+                -v "${HOME}:${HOME}")
+    [[ "${DATA}" == "${HOME}"/* ]] || args+=(-v "${DATA}:${DATA}")
+    # Run as you, so the files it writes are yours.
+    if [[ "${ENGINE}" == podman ]]; then args+=(--userns=keep-id); else args+=(--user "$(id -u):$(id -g)"); fi
+    [[ -n "${CPUS}" ]] && args+=(--cpus "${CPUS}")
+    [[ -n "${MEMORY}" ]] && args+=(--memory "${MEMORY}")
+    local gpu=()
+    if has_gpu; then
+        if [[ "${ENGINE}" == podman ]]; then gpu=(--device nvidia.com/gpu=all); else gpu=(--gpus all); fi
+    fi
+    "${ENGINE}" rm -f "${NAME}" >/dev/null 2>&1 || true
+    if ! "${ENGINE}" "${args[@]}" "${gpu[@]}" "${IMAGE}" >/dev/null; then
+        [[ ${#gpu[@]} -gt 0 ]] || die "${ENGINE} could not start the container (see above)"
+        say "could not give the container the GPU (is the NVIDIA container toolkit installed?); starting without it"
+        "${ENGINE}" rm -f "${NAME}" >/dev/null 2>&1 || true
+        "${ENGINE}" "${args[@]}" "${IMAGE}" >/dev/null || die "${ENGINE} could not start the container (see above)"
+    fi
+}
+
+start_apptainer() {
+    local sif="${STATE}/image.sif"
+    export APPTAINER_CACHEDIR="${APPTAINER_CACHEDIR:-${DATA}/.apptainer-cache}"
+    export SINGULARITY_CACHEDIR="${SINGULARITY_CACHEDIR:-${APPTAINER_CACHEDIR}}"
+    if [[ ! -s "${sif}" ]]; then
+        say "downloading ${IMAGE} (once; a few GB)..."
+        "${ENGINE}" pull "${sif}.partial" "docker://${IMAGE}" && mv "${sif}.partial" "${sif}"
+    fi
+    port_open "${PORT}" && die "port ${PORT} is already in use on this server; choose another with --port"
+    local args=(run --cleanenv
+                --env "SPE_PORT=${PORT},SPE_DATA=${DATA},SPE_HOST_NAME=${HOST_FQDN},SPE_SSH_USER=${USER}")
+    # Apptainer shares the server's CPUs; this caps how many the runs use.
+    [[ -n "${CPUS}" ]] && args+=(--env "PYTHON_CPU_COUNT=${CPUS%.*}")
+    [[ -n "${MEMORY}" ]] && say "--memory is not supported with ${ENGINE}; ignored"
+    [[ "${DATA}" == "${HOME}"/* ]] || args+=(--bind "${DATA}")
+    has_gpu && args+=(--nv)
+    # Its own session, so stop can end it and every run it started.
+    setsid nohup "${ENGINE}" "${args[@]}" "${sif}" > "${STATE}/server.log" 2>&1 < /dev/null &
+    echo $! > "${STATE}/server.pid"
+}
+
+do_start() {
+    ENGINE="$(pick_engine)"
+    if is_running; then
+        say "already running"
+        do_url
+        return
+    fi
+    rm -f "${STATE}/url"
+    save_settings
+    say "starting with ${ENGINE}..."
+    case "${ENGINE}" in
+        docker|podman) start_container ;;
+        *)             start_apptainer ;;
+    esac
+    # Ready once it answers on the port and has written the link.
+    local waited=0
+    until port_open "${PORT}" && [[ -s "${STATE}/url" ]]; do
+        if ! is_running; then
+            do_logs_tail
+            die "it stopped while starting (log above)"
+        fi
+        (( waited++ < 180 )) || die "not ready after 3 minutes; see: $0 logs"
+        sleep 1
+    done
+    do_url
+}
+
+do_stop() {
+    load_settings
+    case "${ENGINE}" in
+        docker|podman)
+            "${ENGINE}" stop -t 30 "${NAME}" >/dev/null 2>&1 || true
+            "${ENGINE}" rm -f "${NAME}" >/dev/null 2>&1 || true ;;
+        *)
+            if is_running; then
+                local pid; pid="$(<"${STATE}/server.pid")"
+                kill -TERM -- "-${pid}" 2>/dev/null || kill -TERM "${pid}" 2>/dev/null || true
+                for _ in $(seq 30); do kill -0 "${pid}" 2>/dev/null || break; sleep 1; done
+            fi
+            rm -f "${STATE}/server.pid" ;;
+    esac
+    say "stopped"
+}
+
+# ------------------------------------------------------------------ the rest
+
+do_url() {
+    [[ -s "${STATE}/url" ]] || die "no link yet: start it first ($0 start)"
+    local url; url="$(<"${STATE}/url")"
+    cat <<EOF
+
+  SigProfilerExtractor Workbench is running on ${HOST_FQDN}.
+
+  Open this link in your browser (keep it private: it is the key to the app):
+
+    ${url}
+
+  Port ${PORT} not reachable from your computer (firewall, off campus)? Run
+  this on your computer, keep it open, and use the link with localhost in
+  place of ${HOST_FQDN}:
+
+    ssh -N -L ${PORT}:localhost:${PORT} ${USER}@${HOST_FQDN}
+
+  Your files: ${DATA}
+
+EOF
+}
+
+do_status() {
+    load_settings
+    if is_running && port_open "${PORT}"; then
+        say "running (${ENGINE}, port ${PORT}); link: $0 url"
+    elif is_running; then
+        say "starting (${ENGINE}, port ${PORT} not answering yet)"
+    else
+        say "not running; start it with: $0 start"
+        return 1
+    fi
+}
+
+do_logs_tail() {
+    case "${ENGINE}" in
+        docker|podman) "${ENGINE}" logs --tail 30 "${NAME}" 2>&1 || true ;;
+        *)             tail -n 30 "${STATE}/server.log" 2>/dev/null || true ;;
+    esac
+}
+
+do_logs() {
+    load_settings
+    case "${ENGINE}" in
+        docker|podman) exec "${ENGINE}" logs -f "${NAME}" ;;
+        *)             exec tail -f "${STATE}/server.log" ;;
+    esac
+}
+
+restart_with_settings() {
+    load_settings
+    local was_running=0
+    is_running && was_running=1
+    [[ "${was_running}" == 1 ]] && do_stop
+    "$@"
+    [[ "${was_running}" == 1 ]] && do_start || say "start it with: $0 start"
+}
+
+pull_image() {
+    case "${ENGINE}" in
+        docker|podman) "${ENGINE}" pull "${IMAGE}" ;;
+        *)             rm -f "${STATE}/image.sif" ;;  # pulled again on start
+    esac
+}
+
+new_token() { rm -f "${STATE}/token" "${STATE}/url"; say "new token on the next start"; }
+
+case "${COMMAND}" in
+    start)     do_start ;;
+    stop)      do_stop ;;
+    status)    do_status ;;
+    url)       do_url ;;
+    logs)      do_logs ;;
+    update)    restart_with_settings pull_image ;;
+    new-token) restart_with_settings new_token ;;
+    -h|--help|help) usage 0 ;;
+    *)         die "unknown command: ${COMMAND} (see --help)" ;;
+esac
