@@ -1,193 +1,303 @@
-# SigProfilerExtractor Workbench on a server
+# Run the SigProfilerExtractor Workbench on a server or cluster
 
-The upstream Workbench (SigProfilerExtractor's browser app), run on a server and
-used from the browser on your own computer: upload inputs, start runs, follow
-them, explore results, download them. Two ways to run it:
+Run the Workbench (SigProfilerExtractor's browser app) on a Linux server (a lab
+workstation, an HPC cluster, a cloud VM) and use it from the browser on your own
+computer: upload inputs, start runs, follow them, explore results and download
+them, the same way you use a Jupyter server.
 
-- **Your own server** (a lab workstation, a cloud VM, a cluster with Apptainer):
-  one command, from a Docker image. See below.
-- **The UAlbany DGX cluster**: a SLURM job. See [On the DGX cluster](#on-the-dgx-cluster).
+- **No admin rights needed**: no `sudo`, no Docker, no system Python. One
+  script, `spe-workbench`, installs everything into a folder of yours.
+- **It runs as you**: each person starts their own copy, with their own link,
+  files and runs.
+- **GPUs**: it installs PyTorch's CUDA 12.8 build, which uses an NVIDIA GPU
+  when there is one and the CPUs otherwise.
+- **On a cluster** it runs as a SLURM job on a compute node instead
+  ([below](#on-a-slurm-cluster)).
 
-Either way you open a link with a token in it, like a Jupyter server's. The
-token is the key to the app: anyone with the link can read your files and run
-programs as you, so keep it private.
+You open a link with a token in it. The token is the key to the app: anyone
+with the link can read your files on the server and run programs as you, so
+keep it private.
 
-## Your own server
+## What you need
 
-On the server, from a clone of the repository:
+- A Linux server you can log in to with SSH (x86-64 or ARM).
+- `bash`, `git`, `tar`, and `curl` or `wget`, which nearly every server has.
+- Internet access from the server the first time, to github.com, pypi.org and
+  download.pytorch.org. After that it can be offline.
+- About 8 GB free for the install (2 GB with `--torch cpu`), plus room for
+  results and any reference genomes (about 3 GB each). It asks for 20 GB free
+  to start.
+
+## 1. Get the code
+
+Log in to the server and clone the repository **on a disk with room**, such
+as a lab or project share, not a small home folder. Your data goes in
+`spe-data` next to the clone.
 
 ```bash
+cd /path/with/room            # e.g. /lab/share/web_servers
 git clone -b workbench-server https://github.com/SigProfilerSuite/SigProfilerExtractor.git
 cd SigProfilerExtractor/server
-./gateway/spe-workbench start
 ```
 
-The first start downloads the image (a few GB); if it is not published, Docker
-or Podman build it from `Dockerfile` instead (10-20 minutes, once). Then it
-starts the app and prints the link. Without a clone, the launcher alone also
-works with a published image; take it out of the image:
+## 2. Start it
 
 ```bash
-docker run --rm --entrypoint cat mishugeb/sigprofilerextractor-workbench \
-  /opt/spe-workbench/spe-workbench > spe-workbench && chmod +x spe-workbench
+./spe-workbench start
 ```
 
-What `start` prints:
+The first start downloads [uv](https://docs.astral.sh/uv/), which installs
+Python 3.13, PyTorch and SigProfilerExtractor from this clone (several
+minutes, once). Then it starts the app in the background and prints:
 
 ```
+  SigProfilerExtractor Workbench is running on myserver.example.edu.
+
   Open this link in your browser (keep it private: it is the key to the app):
 
     http://myserver.example.edu:8765/?token=45abac...
 
-  Port 8765 not reachable from your computer (firewall, off campus)? Run
-  this on your computer, keep it open, and use the link with localhost ...
+  Not reachable from your computer (firewall, off campus, a cloud VM)? Run this on your
+  computer, keep it open, and use the link with localhost in place of
+  myserver.example.edu:
+
     ssh -N -L 8765:localhost:8765 you@myserver.example.edu
+
+  Your files: /path/with/room/spe-data
 ```
+
+On a cluster's login node, use `./spe-workbench submit` instead, so the app
+runs on a compute node ([below](#on-a-slurm-cluster)).
+
+## 3. Open it in your browser
+
+**Try the link as printed first.** On campus or on the VPN it often just
+works.
+
+**If the page does not load** (it times out), the server's port is closed to
+your computer. Make an SSH tunnel:
+
+1. Open a terminal **on your own computer**: Terminal on a Mac, PowerShell on
+   Windows 10 or 11 (both have `ssh`).
+2. Paste the `ssh -N -L ...` command the launcher printed and log in as you
+   normally do. It then shows nothing; that is right. Leave it open while you
+   use the app.
+3. Open the link with `localhost` in place of the server's name:
+   `http://localhost:8765/?token=45abac...`
+
+Print the link and the tunnel command again any time with `./spe-workbench url`.
+
+## 4. Use it
+
+The Workbench is the same as on your own computer, with these differences:
+
+- **Inputs**: click **Upload & download** (bottom right) to upload files or a
+  folder from your computer; it shows the path to paste into the Input card.
+  Files already on the server can be pasted by their path as they are. The
+  **Browse** buttons cannot open a file picker on a server.
+- **Results** are saved on the server, in the data folder's
+  `SigProfilerExtractor_results/` unless you choose another output folder.
+  **Upload & download** offers any run's output folder as one .zip.
+- **GPU**: tick *Use the GPU* in a run's Advanced settings.
+
+Closing the browser stops nothing: runs keep going, and the same link finds
+them later, even from another computer. The app keeps running after you log
+out of the server.
+
+## 5. Stop it
+
+```bash
+./spe-workbench stop
+```
+
+This stops the app and any run in progress; so does **Quit** in the
+Workbench's top bar. Start it again with `./spe-workbench start`; the link
+stays the same. It does not come back by itself after the server restarts.
+
+## On a SLURM cluster
+
+Clone on a disk the compute nodes share (a lab or project share), then, on
+the login node:
+
+```bash
+./spe-workbench submit --gpus 1 --cpus 32 --memory 128G --time 2-00:00:00 -- --partition=NAME
+```
+
+- `--cpus` (default 8), `--memory` (default 32G) and `--gpus` (default 0) are
+  what the job asks for. `--time` is its time limit (default: the partition's).
+- Anything after `--` goes to `sbatch` as it is: `--partition`, `--account`,
+  `--qos`, whatever your cluster requires.
+- It installs on the login node first (compute nodes often have no internet),
+  submits the job, waits for it to start, and prints the link.
+- Compute nodes are usually reachable only from inside the cluster, so the
+  printed tunnel goes through the login node:
+
+  ```bash
+  ssh -N -L 8765:node12.cluster.edu:8765 you@login.cluster.edu
+  ```
+
+  Run it on your computer, then open the link with `localhost` in place of
+  the node's name.
+
+The other commands then work on the job: `url` prints the link (also once a
+waiting job starts), `status` shows the node and the time left or why it is
+still waiting, `logs` follows its log, and `stop` cancels it, stopping any run
+first. The job ends at its time limit, and so does any run still going (the
+app is told a minute early, so it stops them cleanly); ask for enough `--time`.
+
+**On the UAlbany DGX cluster**, from `dgx-head01`:
+
+```bash
+./spe-workbench submit --gpus 1 --cpus 32 --memory 128G --time 2-00:00:00 \
+  -- --partition=dgx --qos=freetier
+```
+
+`freetier` allows up to 7 days but can be preempted by `paidtier-1` jobs;
+`--qos=paidtier-1` is not preempted but allows at most 1 day.
+
+## Commands
 
 | Command | Does |
 |---|---|
 | `./spe-workbench start` | Start it and print the link |
-| `./spe-workbench url` | Print the link again |
-| `./spe-workbench status` | Is it running? |
-| `./spe-workbench logs` | Follow its log |
+| `./spe-workbench submit` | Run it as a SLURM job instead |
+| `./spe-workbench url` | Print the link and the tunnel command again |
+| `./spe-workbench status` | Is it running? (a job: where, and the time left) |
+| `./spe-workbench logs` | Follow its log (Ctrl-C to leave; the app keeps running) |
 | `./spe-workbench stop` | Stop it, and any run in progress |
-| `./spe-workbench update` | Get the newest image and restart (an image built here is rebuilt: `git pull` first) |
-| `./spe-workbench build` | Build the image here from the clone (Docker or Podman) |
 | `./spe-workbench new-token` | New link; the old one stops working |
+| `./spe-workbench update` | Reinstall from the clone and restart (`git pull` first) |
+| `./spe-workbench install` | Install only (`start` does it when needed) |
+| `./spe-workbench --help` | All of this, in the terminal |
 
-Options for `start`: `--data DIR` (default `~/sigprofiler-workbench`),
-`--port N` (default 8765), `--cpus N`, `--memory 64g`, `--no-gpu`,
-`--image NAME`.
+## Options
 
-- **Engine**: Docker or Podman when you may run them, else Apptainer or
-  Singularity (clusters usually allow these, not Docker). The app runs as you,
-  so the files it writes are yours.
-- **The link stays the same** across restarts and reboots (Docker restarts it
-  with the server), so you can bookmark it. `new-token` changes it.
-- **Your files**: uploads, results, reference genomes and run records go in
-  the data folder. Your home folder is visible inside the app at the same
-  paths, so you can paste a path such as `/home/you/project/vcfs` as it is.
-- **GPU**: given to the app when the server has an NVIDIA GPU (Docker needs
-  the NVIDIA container toolkit; without it, the app starts on the CPUs).
-  Tick *Use the GPU* in a run's Advanced settings to use it.
-- **CPUs**: runs use at most the CPUs the app has (`--cpus`, or all).
-- **Sharing a server**: each person starts their own copy, on their own port
-  (`--port 8766`), with their own token, files and runs. The container is
-  named after you (`spe-workbench-<user>`), so your `start` and `stop` never
-  touch anyone else's.
+None are needed. Each one you give is remembered for the next `start` or
+`submit` on that server.
 
-Without the launcher, the same with plain Docker:
+| Option | Default | Meaning |
+|---|---|---|
+| `--data DIR` | `spe-data` beside the clone | Where the install, uploads, results, genomes and run records go |
+| `--port N` | 8765 | The port to try first; if it is taken, the next free one |
+| `--cpus N` | all (`submit`: 8) | CPUs the runs may use; `all` removes a limit |
+| `--no-gpu` | GPUs used | Hide the GPUs from the app; `--gpu` undoes it |
+| `--torch BUILD` | `cu128` | PyTorch build: `cu128` (NVIDIA driver 525 or newer; also runs on CPUs) or `cpu` (6 GB smaller). Changing it reinstalls PyTorch |
+| `--gpus N` | 0 | `submit` only: GPUs the job asks for |
+| `--memory SIZE` | 32G | `submit` only: memory the job asks for |
+| `--time T` | the partition's | `submit` only: the job's time limit, e.g. `2-00:00:00` |
 
-```bash
-docker run -d --name spe-workbench --restart unless-stopped -p 8765:8765 \
-  --user "$(id -u):$(id -g)" -v "$HOME:$HOME" -e SPE_DATA="$HOME/sigprofiler-workbench" \
-  -e SPE_HOST_NAME="$(hostname -f)" --gpus all mishugeb/sigprofilerextractor-workbench
-docker logs spe-workbench        # shows the link
-```
+## Good to know
 
-### Building and publishing the image
+- **Where your files go.** Everything is in the data folder: the install in
+  `.workbench/install/`, uploads in `uploads/`, results in
+  `SigProfilerExtractor_results/`, reference genomes in `references/`, run
+  records in `.cache/`. In the clone, installing adds only files git ignores
+  (`SigProfilerExtractor/_version.py`, `*.egg-info`); nothing large goes in
+  your home folder.
+- **One copy per data folder.** Run records are kept per data folder, and a
+  run is tracked by its process on its own machine, so `start` and `submit`
+  refuse while a copy for the same data folder runs anywhere, and say where.
+- **Ports.** If someone else on the server already has 8765, the app takes the
+  next free one and the link shows it. That port is tried first next time, so
+  a bookmarked link keeps working.
+- **CPUs.** Runs use at most the CPUs the app has: `--cpus`, a SLURM job's
+  CPUs, or all. The Computer fields in Advanced settings are capped there, and
+  a run asking for more is refused. On a shared server, leave room for others
+  with `--cpus`.
+- **Updating.** `git pull`, then `./spe-workbench stop` and `start` to run the
+  new code; changed requirements are installed on that start. Or
+  `./spe-workbench update`, which reinstalls everything and restarts.
+- **Two people on one server** each clone and start their own copy; they get
+  different ports, tokens, files and runs.
 
-From this folder, on a machine with Docker:
+## Troubleshooting
 
-```bash
-docker build -t mishugeb/sigprofilerextractor-workbench .                         # GPU + CPU
-docker build -t mishugeb/sigprofilerextractor-workbench:cpu --build-arg TORCH=cpu .  # smaller, CPU only
-docker push mishugeb/sigprofilerextractor-workbench
-```
+**"that disk has only N GB free"**: the data folder would be on a small disk,
+such as a home folder. Give a folder on a larger one; it is remembered:
+`./spe-workbench start --data /lab/share/spe-data`.
 
-`SPE_REF` (a build arg) picks the SigProfilerExtractor commit, tag or branch;
-the default is the tested commit. The image holds SigProfilerExtractor as
-published plus `gateway/`; data lives only in the mounted folder.
+**"could not download ..." or "could not install PyTorch"**: the server cannot
+reach the internet. If it uses a proxy, set `https_proxy` before starting. On
+a cluster, install on the login node: `submit` does that, or run
+`./spe-workbench install` there.
 
-## What the app adds to the Workbench
+**The link does not load (it times out)**: use the SSH tunnel ([step 3](#3-open-it-in-your-browser)).
 
-- **Upload & download** (bottom-right button, or `/gateway/`): upload files or
-  a folder, and copy the path to paste into the Workbench's Input card;
-  download any run's output folder as one .zip. The Workbench's **Browse**
-  buttons cannot open a file picker on a server, so paste paths instead.
-- **The ready pill** in the top bar shows the CPUs and GPUs and live GPU use
-  (`ready · 32 CPUs · 1 GPU (63% busy, 14/80 GB)`). Click it for graphs of CPU
-  load, memory, and each GPU's load and memory over the last 10 minutes
-  (sampled every 2 s, refreshed every 3 s while open). On the cluster it also
-  shows the job, its time left and how full the node is. Memory is the working
-  set: the job's or container's usage less reclaimable file cache.
-- **CPU limits**: the Computer fields in Advanced settings are capped at the
-  CPUs the app has, and a run asking for more is refused.
+**"This site can't provide a secure connection" or `ERR_SSL_PROTOCOL_ERROR`**:
+the browser switched the link to `https://`. The app speaks plain `http://`:
+type the link with `http://` in front, or use the tunnel and `localhost`.
 
-## On the DGX cluster
+**The tunnel says "Address already in use"**: something on your own computer
+has that port. Use another one on your side, for example
+`ssh -N -L 9000:localhost:8765 you@myserver.example.edu`, then open
+`http://localhost:9000/?token=...`.
 
-```bash
-cd /network/rit/lab/islam_lab/mishu/sigprofiler_webapp
-sbatch run_workbench.sbatch
-cat workbench_endpoint.env      # WORKBENCH_URL=http://dgxNN.its.albany.edu:PORT/?token=...
-```
+**The page asks for a token**: paste the part of the link after `?token=`,
+or open the whole link. After `new-token`, old links stop working.
 
-Open `WORKBENCH_URL` on the campus network or VPN. Off campus without VPN,
-tunnel with the **same port on both ends** (the job log prints the command),
-then open `http://localhost:PORT/?token=...`:
+**The ready pill shows no GPU**: on a cluster, ask for one (`--gpus 1`). On a
+server, check that `nvidia-smi` lists it, and that `--no-gpu` is not set
+(`--gpu` undoes it). A driver older than 525 cannot run the CUDA 12.8 build.
 
-```bash
-ssh -N -L PORT:dgxNN.its.albany.edu:PORT si174851@dgx-head01.its.albany.edu
-```
+**A SLURM job keeps waiting**: `./spe-workbench status` shows why (the
+reason SLURM gives). Ask for less (`--cpus`, `--memory`, `--gpus`, `--time`)
+or another partition.
 
-The job runs the same image as other servers, as `images/spe-workbench.sqsh`
-with enroot (the cluster's container runtime; Docker is admin-only here), with
-a new token per job. Build or update that image with:
+**The job ends at once**: `./spe-workbench logs` shows why. Often the cluster
+requires an option, such as `-- --partition=NAME --account=NAME`, or the data
+folder is not on a disk the compute nodes can see.
 
-```bash
-sbatch build_sqsh.sh                  # ~10 min; SPE_REF=<tag> sbatch build_sqsh.sh for another version
-```
+**A run in a job stops partway**: the job may have run out of memory or time,
+or been preempted. Submit again with more `--memory` or `--time`, or a QOS
+that is not preempted.
 
-The next job uses the new image. Inside the container, the lab share
-(`/network/rit/lab/islam_lab`) and your home folder keep their paths, so paste
-paths as they are; uploads, results and run records stay in this folder.
+Anything else: `./spe-workbench logs` usually says what went wrong.
 
-Only one Workbench job can run at a time (a second one exits at once): runs
-are tracked by process ID on their own node, in one shared records folder.
-Stop with **Quit** in the Workbench, or `scancel -n spe_workbench`. Runs live
-inside the job, so ending it stops any unfinished run; size `--time` to fit.
+## On a cloud VM
 
-## Layout
+- **Disk**: at least 30 GB for the install and a genome or two; more for data.
+- **Machine**: CPUs matter most; an NVIDIA GPU speeds up runs with *Use the
+  GPU*. Without one, `--torch cpu` saves 6 GB.
+- **Reaching it**: keep the firewall closed and use an SSH tunnel. On Google
+  Cloud: `gcloud compute ssh VM_NAME --zone ZONE -- -N -L 8765:localhost:8765`,
+  then open `http://localhost:8765/?token=...`. The app speaks plain HTTP, so
+  do not open its port to the internet: the token would cross it unencrypted.
 
-| Path | What |
-|---|---|
-| `gateway/spe_gateway.py` | The add-on: token sign-in, upload, .zip download, resources |
-| `gateway/static/` | Its pages, script and styles |
-| `gateway/spe-workbench` | Launcher for your own server |
-| `gateway/entrypoint.sh` | The image's start-up script |
-| `gateway/install.sh` | What goes into the image; used by both builds |
-| `Dockerfile`, `.dockerignore` | The Docker image |
-| `build_sqsh.sh` | The same image for this cluster, as `images/spe-workbench.sqsh` |
-| `run_workbench.sbatch` | The cluster job |
-| `SigProfilerExtractor/` | Upstream clone with its own venv, for `./launch_web.sh` (the job no longer uses it) |
-| `uploads/`, `SigProfilerExtractor_results/`, `references/` | The cluster job's uploads, results and genomes |
-| `.cache/sigprofilerextractor/` | The cluster job's run records |
-| `workbench_endpoint.env` | The cluster job's current URL and token (`chmod 600`) |
-| `logs/` | Cluster job logs |
+## Security
 
-## How it fits with the local launcher
+The token grants everything the Workbench can do: read any file you can on
+the server and run processes as you. Treat it like a password: do not paste
+it in shared documents or chats. `./spe-workbench new-token` replaces it. The
+port is plain HTTP, so on a network you do not trust, use the SSH tunnel
+instead of opening the port.
+
+## How it works
 
 `gateway/spe_gateway.py` imports the Workbench's own server and handler; no
 upstream file is changed. The Workbench answers only `127.0.0.1` and has no
 login. The gateway listens on the server, admits only requests that carry the
 token, then passes them to the Workbench as if they came from the server
-itself, so its own checks still run.
+itself, so its own checks still run. It adds:
 
-`./launch_web.sh` in the clone still works as upstream intends, even while the
-cluster job is running. Each keeps separate run records: the job's are under
-`.cache/` here, the local launcher's under `~/.cache`. `--stop` on one does
-not stop the other.
+- **Upload & download** (bottom-right button, or `/gateway/`): upload files or
+  a folder and copy the path to paste; download any run's output folder as one
+  .zip.
+- **The ready pill** in the top bar shows the CPUs and GPUs and live use
+  (`ready · 32 CPUs · 1 GPU (63% busy, 14/80 GB)`). Click it for graphs of CPU
+  load, memory, and each GPU's load and memory over the last 10 minutes. In a
+  SLURM job it also shows the job, its time left and how full the node is.
+- **CPU limits**, as above.
 
-The clone's venv has PyTorch's CUDA 12.8 build (the DGX driver, 570, predates
-CUDA 13). `./launch_web.sh --reinstall` puts the default CUDA 13 build back,
-after which local runs still work but cannot use the GPU. To restore:
-`.venv-dashboard/bin/python -m uv pip install --python .venv-dashboard/bin/python
---reinstall-package torch torch --index-url https://download.pytorch.org/whl/cu128`.
-The images install the CUDA 12.8 build themselves.
+| Path in `server/` | What |
+|---|---|
+| `spe-workbench` | The launcher |
+| `gateway/spe_gateway.py` | Token sign-in, free-port choice, upload, .zip download, resources |
+| `gateway/static/` | Its pages, script and styles |
+| `gateway/entrypoint.sh` | Start-up script the launcher runs, and its settings |
 
-## Security
+In the data folder, `.workbench/` holds the install, the token, the link, the
+log and the last start's settings (`launch.env`).
 
-The link's token grants everything the Workbench can do: read any file you
-can, and run processes as you. Treat it like a password; `new-token` (or a new
-cluster job) replaces it. The port is plain HTTP: on a network you do not
-trust, use the SSH tunnel instead of opening the port.
+The Workbench's own launcher, `../launch_web.sh`, is separate and still works
+as upstream intends, with its own environment (`.venv-dashboard`) and run
+records (`~/.cache`). Stopping one does not stop the other.

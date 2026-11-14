@@ -1,4 +1,0 @@
-# Only the gateway goes into the image; SigProfilerExtractor comes from GitHub.
-*
-!gateway/
-gateway/**/__pycache__

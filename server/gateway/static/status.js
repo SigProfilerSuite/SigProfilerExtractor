@@ -92,7 +92,7 @@
     const minutes = Math.round(((h.t || []).length * (h.interval_seconds || 2)) / 60);
     const grid = el('div', 'spe-grid');
     const left = duration(r.time_left_seconds);
-    // A SLURM job, or the app running directly on a server or in a container.
+    // A SLURM job, or the app running directly on a server.
     grid.append(...(r.job_id
       ? row('Job', `${r.job_id} on ${r.node}${left ? ` · ${left} left` : ''}`)
       : row('Server', r.node)));

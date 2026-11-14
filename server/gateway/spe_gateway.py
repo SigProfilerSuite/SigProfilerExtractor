@@ -1,5 +1,5 @@
-"""Serve the SigProfilerExtractor Workbench from a server (a cluster node, a
-container) to the browser on another computer.
+"""Serve the SigProfilerExtractor Workbench from a server (a lab machine, a
+cluster node) to the browser on another computer.
 
 The Workbench (SigProfilerExtractor/web/server.py) is built for one person on
 their own computer: it binds 127.0.0.1, has no login, and refuses any request
@@ -18,7 +18,7 @@ laptop, so this wrapper runs the very same server and handler, but:
   is answered with a pointer to that page instead.
 
 Run it with the Workbench's own interpreter (it imports the installed
-package); run_workbench.sbatch does that. The token comes from the
+package); the launcher, ../spe-workbench, does that. The token comes from the
 SPE_GATEWAY_TOKEN environment variable, never argv, which other users on the
 node can read with ps.
 """
@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import errno
 import json
 import math
 import os
@@ -99,8 +100,8 @@ class GatewayHandler(workbench.Handler):
     def _gate(self) -> bool:
         """True if the request may go on; otherwise it has been answered."""
         host = (self.headers.get("Host") or "").rsplit(":", 1)[0].strip("[]").lower()
-        # None: any name or address (--public-host '*'), for a container that
-        # cannot know how it is reached. The token check below still applies,
+        # None: any name or address (--public-host '*'), for a server that
+        # cannot know every name it is reached by. The token check below still applies,
         # and the cookie is bound to the name the browser used.
         if self.server.public_hosts is not None and host not in self.server.public_hosts:
             self._fail("unknown host name", 403)
@@ -333,8 +334,8 @@ class Resources:
         """Share of the allowed CPUs in use since the previous sample.
 
         From the cgroup's CPU time when there is one, which counts exactly
-        this job or container even when its CPUs are shared (a docker --cpus
-        quota); else the load of the CPUs in this process's CPU set.
+        this job even when its CPUs are shared; else the load of the CPUs in
+        this process's CPU set.
         """
         usage, now = self._cgroup_cpu_usage(), time.monotonic()
         before, before_at = self._cpu_usage, self._cpu_usage_at
@@ -370,8 +371,7 @@ class Resources:
     def _measure_slow(self) -> dict:
         env = os.environ
         job = env.get("SLURM_JOB_ID")
-        # SPE_HOST_NAME: the server's own name, which the launcher passes in
-        # (a container's hostname is otherwise a random id).
+        # SPE_HOST_NAME: the server's full name, which the launcher passes in.
         node = (env.get("SLURMD_NODENAME") or env.get("SPE_HOST_NAME")
                 or socket.gethostname()).split(".")[0]
         mem_mb = env.get("SLURM_MEM_PER_NODE")
@@ -453,10 +453,9 @@ def _time_left(job: str | None) -> int | None:
 def cgroup_dir() -> Path | None:
     """The cgroup (v2) holding exactly this app's resources, if there is one.
 
-    In a SLURM job: the job's cgroup (job_N), shared by all its steps. In a
-    container with its own cgroup namespace (Docker, Podman): the namespace
-    root, which is the container. Anywhere else the cgroup is a whole login
-    session, which says nothing about this app, so None.
+    In a SLURM job: the job's cgroup (job_N), shared by all its steps.
+    Anywhere else the cgroup is a whole login session, which says nothing
+    about this app, so None.
     """
     try:
         lines = Path("/proc/self/cgroup").read_text().splitlines()
@@ -468,15 +467,15 @@ def cgroup_dir() -> Path | None:
     match = re.match(r"(.*/job_\d+)", path)
     if match:
         base = Path("/sys/fs/cgroup" + match.group(1))
-    elif path == "/" and (Path("/.dockerenv").exists() or Path("/run/.containerenv").exists()):
-        base = Path("/sys/fs/cgroup")
     else:
         return None
     return base if (base / "memory.current").is_file() else None
 
 
 def allowed_cpus() -> int:
-    """CPUs this app may use: its CPU set, capped by a cgroup CPU quota (docker --cpus)."""
+    """CPUs this app may use: its CPU set (a SLURM job's CPUs), capped by a
+    cgroup CPU quota and by PYTHON_CPU_COUNT when it is set (the launcher's
+    --cpus)."""
     count = len(os.sched_getaffinity(0))
     base = cgroup_dir()
     if base is not None:
@@ -486,11 +485,15 @@ def allowed_cpus() -> int:
                 count = min(count, max(1, math.ceil(int(quota) / int(period))))
         except (OSError, ValueError):
             pass
+    try:
+        count = min(count, max(1, int(os.environ.get("PYTHON_CPU_COUNT") or count)))
+    except ValueError:
+        pass
     return count
 
 
 def _cgroup_memory_limit(base: Path | None) -> int | None:
-    """A container's memory limit (docker --memory), if it has one."""
+    """A SLURM job's memory limit, if it has one."""
     if base is None:
         return None
     try:
@@ -501,7 +504,7 @@ def _cgroup_memory_limit(base: Path | None) -> int | None:
 
 
 def _memory_used(base: Path | None) -> int:
-    """Memory in use by the whole job or container, else by this process tree.
+    """Memory in use by the whole SLURM job, else by this process tree.
 
     From the cgroup, the working set: memory.current less the inactive file
     cache, which the kernel reclaims at will (the measure docker stats and
@@ -619,9 +622,57 @@ def _attr(text: str) -> str:
             .replace("<", "&lt;").replace(">", "&gt;"))
 
 
+def open_server(args):
+    """The Workbench's server on the first free port of --port and the next
+    --port-tries - 1, or None. Binding is the only reliable test: a port can
+    be taken on any address, or by someone starting at the same moment."""
+    for port in range(args.port, args.port + max(args.port_tries, 1)):
+        try:
+            return workbench.make_server(args.bind, port, _state_dir() / "jobs", volume=args.volume)
+        except OSError as exc:
+            if exc.errno not in (errno.EADDRINUSE, errno.EACCES):
+                raise
+    return None
+
+
+def announce(port: int, token: str, url_file: Path | None) -> None:
+    """Print the link and the SSH tunnel for it, and write the link (owner
+    only) where the launcher reads it, now that the port is known."""
+    env = os.environ
+    host = env.get("SPE_HOST_NAME") or socket.getfqdn()
+    user = env.get("SPE_SSH_USER") or "you"
+    url = f"http://{host}:{port}/?token={token}"
+    if env.get("SPE_SSH_VIA"):
+        tunnel = f"ssh -N -L {port}:{host}:{port} {user}@{env['SPE_SSH_VIA']}"
+    else:
+        tunnel = f"ssh -N -L {port}:localhost:{port} {user}@{host}"
+    if url_file is not None:
+        fd = os.open(url_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as out:
+            out.write(url + "\n")
+    print(f"""
+  SigProfilerExtractor Workbench
+
+  Open this link in your browser (keep it private: it is the key to this app):
+
+    {url}
+
+  If the port is not reachable from your computer, tunnel it over SSH (same
+  port on both ends) and open the same link with localhost in place of {host}:
+
+    {tunnel}
+
+  Data folder: {env.get("SPE_DATA", "")}
+""", flush=True)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--port", type=int, required=True)
+    parser.add_argument("--port-tries", type=int, default=1, metavar="N",
+                        help="if the port is taken, try the next ones, N ports in all")
+    parser.add_argument("--url-file", type=Path, metavar="FILE",
+                        help="write the link here once the port is open")
     parser.add_argument("--bind", default="0.0.0.0")
     parser.add_argument("--public-host", action="append", default=[],
                         help="Extra host name the browser may use (repeatable); '*' allows any.")
@@ -637,7 +688,8 @@ def main(argv: list[str] | None = None) -> int:
     # os.cpu_count() reports the whole machine, and SigProfilerExtractor's
     # default cpu=-1 means "all of them". Python 3.13+ reads PYTHON_CPU_COUNT
     # instead, at start-up only: so set it to the CPUs this app may use (its
-    # CPU set and any container quota) and start again. Runs inherit it.
+    # CPU set: a SLURM job's) and start again. Runs inherit it. The launcher's
+    # --cpus sets it lower.
     if "PYTHON_CPU_COUNT" not in os.environ:
         os.environ["PYTHON_CPU_COUNT"] = str(allowed_cpus())
         os.execv(sys.executable, [sys.executable, *sys.argv])
@@ -648,7 +700,15 @@ def main(argv: list[str] | None = None) -> int:
     # work from the state directory instead.
     os.chdir(_state_dir())
 
-    srv = workbench.make_server(args.bind, args.port, _state_dir() / "jobs", volume=args.volume)
+    srv = open_server(args)
+    if srv is None:
+        last = args.port + max(args.port_tries, 1) - 1
+        print(f"FATAL: port {args.port}" + (f" to {last}" if last > args.port else "")
+              + " already in use on this server", file=sys.stderr, flush=True)
+        return 98
+    wanted, args.port = args.port, srv.server_address[1]
+    if args.port != wanted:
+        print(f"port {wanted} is taken; using {args.port}", flush=True)
     srv.RequestHandlerClass = GatewayHandler
     srv.gateway_token = token
     srv.resources = Resources()
@@ -663,6 +723,7 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(0)
 
     signal.signal(signal.SIGTERM, _stop)
+    announce(args.port, token, args.url_file)
     print(f"Workbench gateway listening on {args.bind}:{args.port}", flush=True)
     try:
         srv.serve_forever()

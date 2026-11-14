@@ -1,10 +1,11 @@
 #!/bin/bash
 #
-# Container start-up for the SigProfilerExtractor Workbench (see ../Dockerfile).
+# Start-up for the SigProfilerExtractor Workbench on a server: the launcher
+# (../spe-workbench) runs this with the installed Python first on PATH.
 #
 # Runs the Workbench behind spe_gateway.py, which asks for this server's token
 # and adds upload, .zip download and the resources panel. Everything the app
-# keeps goes in $SPE_DATA (mount a folder there):
+# keeps goes in $SPE_DATA:
 #
 #   uploads/                        files uploaded from the browser
 #   SigProfilerExtractor_results/   default output folder for runs
@@ -13,30 +14,30 @@
 #   .workbench/token, url           the token and the link to open
 #
 # Settings (environment):
-#   SPE_DATA         data folder inside the container        (default /data)
+#   SPE_DATA         data folder                             (required)
 #   SPE_PORT         port to listen on                       (default 8765)
+#   SPE_PORT_TRIES   if it is taken, try the next ones, this many in all (default 1)
 #   SPE_BIND         address to listen on                    (default 0.0.0.0)
 #   SPE_TOKEN        use this token (32+ characters) instead of the stored one
 #   SPE_HOST_NAME    the server's name, for the printed link and the panel
-#   SPE_PUBLIC_PORT  the port the browser uses, if mapped differently
 #   SPE_SSH_USER     user name for the printed SSH tunnel command
 #   SPE_SSH_VIA      host to tunnel through, when the server itself is not
 #                    reachable by SSH (a cluster's login node)
+#   PYTHON_CPU_COUNT CPUs the runs may use                   (default all)
 #
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DATA="${SPE_DATA:-/data}"
+DATA="${SPE_DATA:?SPE_DATA: the data folder}"
 PORT="${SPE_PORT:-8765}"
 STATE="${DATA}/.workbench"
 
 if ! mkdir -p "${STATE}" 2>/dev/null || [[ ! -w "${DATA}" ]]; then
     echo "FATAL: ${DATA} is not writable by user $(id -u):$(id -g)." >&2
-    echo "       Mount a folder you own there, and run as yourself (docker run --user \$(id -u):\$(id -g))." >&2
     exit 1
 fi
 
-# HOME and the caches on the data folder: results default to
+# HOME and the caches in the data folder: results default to
 # $HOME/SigProfilerExtractor_results, and run records to $XDG_CACHE_HOME.
 export HOME="${DATA}"
 export XDG_CACHE_HOME="${DATA}/.cache"
@@ -56,37 +57,16 @@ else
 fi
 # Handed over in the environment: argv is visible to every user through ps.
 export SPE_GATEWAY_TOKEN="${TOKEN}"
+unset SPE_TOKEN
 
-HOST="${SPE_HOST_NAME:-$(hostname -f 2>/dev/null || hostname)}"
-PUBLIC_PORT="${SPE_PUBLIC_PORT:-${PORT}}"
-URL="http://${HOST}:${PUBLIC_PORT}/?token=${TOKEN}"
-(umask 077; printf '%s\n' "${URL}" > "${STATE}/url")
-if [[ -n "${SPE_SSH_VIA:-}" ]]; then
-    TUNNEL="ssh -N -L ${PUBLIC_PORT}:${HOST}:${PUBLIC_PORT} ${SPE_SSH_USER:-you}@${SPE_SSH_VIA}"
-else
-    TUNNEL="ssh -N -L ${PUBLIC_PORT}:localhost:${PUBLIC_PORT} ${SPE_SSH_USER:-you}@${HOST}"
-fi
-
-cat <<EOF
-
-  SigProfilerExtractor Workbench
-
-  Open this link in your browser (keep it private: it is the key to this app):
-
-    ${URL}
-
-  If the port is not reachable from your computer, tunnel it over SSH (same
-  port on both ends) and open the same link with localhost in place of ${HOST}:
-
-    ${TUNNEL}
-
-  Data folder: ${DATA}
-
-EOF
+# The link (.workbench/url) is written, and printed, once the port is open.
+rm -f "${STATE}/url"
 
 exec python3 "${HERE}/spe_gateway.py" \
     --bind "${SPE_BIND:-0.0.0.0}" \
     --port "${PORT}" \
+    --port-tries "${SPE_PORT_TRIES:-1}" \
+    --url-file "${STATE}/url" \
     --public-host '*' \
     --uploads "${DATA}/uploads" \
     --volume "${DATA}/references"
