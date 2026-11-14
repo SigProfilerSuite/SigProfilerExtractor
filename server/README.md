@@ -71,6 +71,10 @@ Options for `start`: `--data DIR` (default `~/sigprofiler-workbench`),
   the NVIDIA container toolkit; without it, the app starts on the CPUs).
   Tick *Use the GPU* in a run's Advanced settings to use it.
 - **CPUs**: runs use at most the CPUs the app has (`--cpus`, or all).
+- **Sharing a server**: each person starts their own copy, on their own port
+  (`--port 8766`), with their own token, files and runs. The container is
+  named after you (`spe-workbench-<user>`), so your `start` and `stop` never
+  touch anyone else's.
 
 Without the launcher, the same with plain Docker:
 

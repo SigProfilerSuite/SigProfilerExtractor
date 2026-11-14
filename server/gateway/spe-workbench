@@ -30,7 +30,10 @@
 set -euo pipefail
 
 IMAGE="${SPE_IMAGE:-mishugeb/sigprofilerextractor-workbench}"
-NAME="spe-workbench"
+# One container per user: on a shared server each person runs their own, on
+# their own port, and one person's start or stop never touches another's.
+NAME="spe-workbench-$(id -un)"
+OLD_NAME="spe-workbench"  # what every container was called before
 DATA="${SPE_DATA_DIR:-${HOME}/sigprofiler-workbench}"
 PORT=8765
 CPUS=""
@@ -120,6 +123,20 @@ load_settings() {
     else
         ENGINE="$(pick_engine)"
     fi
+    adopt_old_container
+}
+
+# A container started by an earlier version of this script has the shared
+# name. Take it over (rename it) when it serves this data folder, which makes
+# it this user's, so stop and status still find it. Anyone else's is left alone.
+adopt_old_container() {
+    [[ "${ENGINE}" == docker || "${ENGINE}" == podman ]] || return 0
+    "${ENGINE}" inspect "${NAME}" >/dev/null 2>&1 && return 0
+    local env
+    env="$("${ENGINE}" inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "${OLD_NAME}" 2>/dev/null)" || return 0
+    if grep -qxF "SPE_DATA=${DATA}" <<< "${env}"; then
+        "${ENGINE}" rename "${OLD_NAME}" "${NAME}" >/dev/null 2>&1 || true
+    fi
 }
 
 # ------------------------------------------------------------------ the image
@@ -143,6 +160,7 @@ ensure_image() {
 # ------------------------------------------------------------------ start / stop
 
 start_container() {  # docker or podman
+    port_open "${PORT}" && die "port ${PORT} is already in use on this server (someone else's app?); choose another with --port"
     local args=(run -d --name "${NAME}" --restart unless-stopped
                 -p "${PORT}:${PORT}"
                 -e SPE_PORT="${PORT}" -e SPE_DATA="${DATA}"
@@ -190,6 +208,7 @@ start_apptainer() {
 
 do_start() {
     ENGINE="$(pick_engine)"
+    adopt_old_container
     if is_running; then
         say "already running"
         do_url
