@@ -150,29 +150,84 @@ the login node:
 ./spe-workbench submit --gpus 1 --cpus 32 --memory 128G --time 2-00:00:00 -- --partition=NAME
 ```
 
-- `--cpus` (default 8), `--memory` (default 32G) and `--gpus` (default 0) are
-  what the job asks for. `--time` is its time limit (default: the partition's).
-- Anything after `--` goes to `sbatch` as it is: `--partition`, `--account`,
-  `--qos`, whatever your cluster requires.
-- It installs on the login node first (compute nodes often have no internet),
-  submits the job, waits for it to start, and prints the link.
-- Compute nodes are usually reachable only from inside the cluster, so the
-  printed tunnel goes through the login node:
+It installs on the login node first (compute nodes often have no internet),
+submits a job that runs the Workbench, waits for the job to start, and prints
+the link. Before submitting it shows exactly what the job asks for:
 
-  ```bash
-  ssh -N -L 8765:node12.cluster.edu:8765 you@login.cluster.edu
-  ```
+```
+spe-workbench: submitting a SLURM job that asks for:
+    CPUs     32                 given; change with --cpus N
+    memory   128G               given; change with --memory SIZE (e.g. 64G)
+    GPUs     1                  given; change with --gpus N
+    time     2-00:00:00         given; change with --time T (e.g. 8:00:00, 2-00:00:00)
+    other    --partition=NAME    (given; options after --)
+  (each is remembered for the next submit)
+```
 
-  Run it on your computer, then open the link with `localhost` in place of
-  the node's name.
+### Asking for resources
+
+The job holds what it asks for from the moment it starts until it ends,
+whether a run is going or not. Every run you start in the Workbench runs
+inside it and can use only that.
+
+| You want | Option | Becomes (`sbatch`) | Default |
+|---|---|---|---|
+| CPUs | `--cpus N` | `--cpus-per-task N` | 8 |
+| Memory | `--memory SIZE`, e.g. `64G`, `500M` | `--mem SIZE` (for the whole job) | 32G |
+| GPUs | `--gpus N` | `--gres gpu:N` | 0: none |
+| Time limit | `--time T`: `MM:SS`, `HH:MM:SS` or `D-HH:MM:SS` | `--time T` | the partition's default, which can be short: set it |
+| Anything else | after `--`, as `sbatch` takes it: `--partition=NAME`, `--account=NAME`, `--qos=NAME`, `--constraint=...` | the same | none |
+
+**How much to ask for:**
+
+- **CPUs**: a run fits its NMF replicates in parallel, one per CPU (the
+  Computer fields in Advanced settings use all of the job's CPUs unless you
+  set fewer), so more CPUs make a run faster.
+- **GPUs**: ask for one (`--gpus 1`) to use *Use the GPU* in a run's Advanced
+  settings; without one the run uses the CPUs. Most clusters put GPUs in
+  their own partition, so add it after `--`.
+- **Memory**: grows with the number of samples, mutation contexts and CPUs. A
+  safe start is about 4 GB per CPU (32 CPUs, 128G). Too little, and SLURM
+  stops the job when it runs out (`OUT_OF_MEMORY` in `status`).
+- **Time**: long enough for every run you plan, plus some margin. A small
+  test (21 samples, 1 to 2 signatures, 3 replicates) took 2 minutes on 4 CPUs;
+  a whole cohort with the defaults (1 to 25 signatures, 100 replicates) can
+  take many hours. When the limit comes, the job ends and so does any run
+  still going (the app is told a minute early, so it stops them cleanly).
+- **Partition, account, QOS**: whatever your cluster requires. Many clusters
+  refuse a job without `--account`, or put it in a default partition with a
+  short time limit.
+
+**Your cluster's limits:** `sinfo -o "%P %l %c %m %G"` lists each partition's
+time limit, CPUs, memory and GPUs per node; `sacctmgr show qos
+format=name,maxwall` the QOS limits; your cluster's documentation, which
+accounts you have. Asking for more than a partition allows leaves the job
+waiting forever or refused; asking for less makes it start sooner.
+
+**Changing them later:** `./spe-workbench stop`, then `submit` again with the
+new options. Options you leave out keep their last value, so
+`./spe-workbench submit --time 1-00:00:00` changes only the time limit.
+
+### Using the job
 
 The other commands then work on the job: `url` prints the link (also once a
 waiting job starts), `status` shows the node and the time left or why it is
-still waiting, `logs` follows its log, and `stop` cancels it, stopping any run
-first. The job ends at its time limit, and so does any run still going (the
-app is told a minute early, so it stops them cleanly); ask for enough `--time`.
+still waiting, `logs` follows its log, and `stop` cancels it, stopping any
+run first. `squeue -u $USER` shows it as `spe-workbench-<you>`.
 
-**On the UAlbany DGX cluster**, from `dgx-head01`:
+Compute nodes are usually reachable only from inside the cluster, so the
+printed tunnel goes through the login node:
+
+```bash
+ssh -N -L 8765:node12.cluster.edu:8765 you@login.cluster.edu
+```
+
+Run it on your computer, then open the link with `localhost` in place of the
+node's name.
+
+### On the UAlbany DGX cluster
+
+From `dgx-head01`:
 
 ```bash
 ./spe-workbench submit --gpus 1 --cpus 32 --memory 128G --time 2-00:00:00 \

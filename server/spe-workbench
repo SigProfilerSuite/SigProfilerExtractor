@@ -471,12 +471,41 @@ do_run() {
     exec "${CMD[@]}"
 }
 
+# Where an option's value comes from, for the request submit prints.
+origin() {
+    if [[ "${GIVEN}" == *" $1 "* ]]; then echo "given"
+    elif [[ -n "${!1}" ]]; then echo "as last time"
+    else echo "default"; fi
+}
+
+# What the job asks SLURM for, each with where it comes from and how to change it.
+print_request() {
+    say "submitting a SLURM job that asks for:"
+    printf '    %-8s %-18s %s\n' \
+        CPUs "${CPUS}" "${C_SRC}; change with --cpus N" \
+        memory "${MEMORY}" "${M_SRC}; change with --memory SIZE (e.g. 64G)" \
+        GPUs "${GPUS:-0}" "${G_SRC}; change with --gpus N"
+    if [[ -n "${TIME}" ]]; then
+        printf '    %-8s %-18s %s\n' time "${TIME}" "${T_SRC}; change with --time T (e.g. 8:00:00, 2-00:00:00)"
+    else
+        printf '    %-8s %-18s %s\n' time "partition default" "set a limit with --time T (e.g. 8:00:00, 2-00:00:00)"
+    fi
+    if [[ ${#SBATCH_ARGS[@]} -gt 0 ]]; then
+        printf '    %-8s %-18s  %s\n' other "${SBATCH_ARGS[*]}" "($(origin SBATCH_ARGS); options after --)"
+    else
+        printf '    %-8s %-18s %s\n' other "none" "add sbatch options after --, e.g. -- --partition=NAME"
+    fi
+    echo "  (each is remembered for the next submit)"
+}
+
 # The app as a SLURM job: installed here first (compute nodes may have no
 # internet), then the job runs "spe-workbench run" for as long as it lasts.
 do_submit() {
     command -v sbatch >/dev/null 2>&1 || die "sbatch not found: this server does not submit SLURM jobs"
     reuse_settings
     running_already && return
+    C_SRC="$(origin CPUS)"; M_SRC="$(origin MEMORY)"; T_SRC="$(origin TIME)"
+    G_SRC="$(origin GPUS)"
     [[ -n "${CPUS}" ]] || CPUS=8
     [[ -n "${MEMORY}" ]] || MEMORY=32G
     install
@@ -489,7 +518,7 @@ do_submit() {
     [[ -n "${TIME}" ]] && args+=(--time "${TIME}")
     args+=(${SBATCH_ARGS[@]+"${SBATCH_ARGS[@]}"})
     local run; run="$(printf '%q ' "${SELF}" run --data "${DATA}")"
-    say "submitting: ${CPUS} CPUs, ${MEMORY} memory${GPUS:+, ${GPUS} GPU(s)}${TIME:+, ${TIME}}${SBATCH_ARGS[*]:+, ${SBATCH_ARGS[*]}}"
+    print_request
     JOB_ID="$(sbatch "${args[@]}" --wrap "exec ${run}")" || die "sbatch refused the job (see above)"
     JOB_ID="${JOB_ID%%;*}"
     save_settings
