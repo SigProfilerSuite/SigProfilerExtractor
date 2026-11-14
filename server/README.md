@@ -11,8 +11,9 @@ them, the same way you use a Jupyter server.
   files and runs.
 - **GPUs**: it installs PyTorch's CUDA 12.8 build, which uses an NVIDIA GPU
   when there is one and the CPUs otherwise.
-- **On a cluster** it runs as a SLURM job on a compute node instead
-  ([below](#on-a-slurm-cluster)).
+- **On a server or a cluster**: `start` runs it on the machine you are on;
+  `submit` runs it as a SLURM job on a cluster's compute node
+  ([which one?](#which-one-start-or-submit)).
 
 You open a link with a token in it. The token is the key to the app: anyone
 with the link can read your files on the server and run programs as you, so
@@ -27,6 +28,30 @@ keep it private.
 - About 8 GB free for the install (2 GB with `--torch cpu`), plus room for
   results and any reference genomes (about 3 GB each). It asks for 20 GB free
   to start.
+
+## Which one: `start` or `submit`?
+
+The launcher runs the app in one of two ways. Pick by where you are logged in:
+
+| | `./spe-workbench start` | `./spe-workbench submit` |
+|---|---|---|
+| **Use it on** | a machine you may run work on directly: a lab workstation, a cloud VM, an interactive session on a compute node | a cluster's login node, where SLURM (`sbatch`) runs the work |
+| **Where the app runs** | on this machine, in the background | on a compute node SLURM picks, as a batch job |
+| **CPUs, memory, GPUs** | this machine's, shared with anyone else on it (limit with `--cpus`) | only what the job asks for (`--cpus`, `--memory`, `--gpus`), its own |
+| **How long it runs** | until `stop`, or until the machine restarts | until `stop` or the job's time limit (`--time`); a job may also wait in the queue first |
+| **The link** | this machine's name | the compute node's name; the tunnel goes through the login node |
+
+**On a cluster, use `submit` from the login node.** Login nodes are shared by
+everyone for editing and submitting jobs; a fit running there slows them all,
+and clusters often stop long or heavy processes on them. Run `start` on a
+cluster only inside an interactive job on a compute node (for example
+`srun --pty bash`), and then the app ends when that session ends.
+
+Not sure? If `sbatch` exists (`command -v sbatch`) and the machine's name says
+"login" or "head", use `submit`; otherwise use `start`. Either way, every other
+command (`url`, `status`, `logs`, `stop`, ...) works the same, and the data
+folder is the same, so you can switch between them: `stop` one, then run the
+other.
 
 ## 1. Get the code
 
@@ -66,8 +91,10 @@ minutes, once). Then it starts the app in the background and prints:
   Your files: /path/with/room/spe-data
 ```
 
-On a cluster's login node, use `./spe-workbench submit` instead, so the app
-runs on a compute node ([below](#on-a-slurm-cluster)).
+On a cluster's login node, run `./spe-workbench submit` instead ([which
+one?](#which-one-start-or-submit)): it installs the same way, then submits a
+SLURM job that runs the app on a compute node, and prints the link once the job
+has started ([on a SLURM cluster](#on-a-slurm-cluster) has the options).
 
 ## 3. Open it in your browser
 
