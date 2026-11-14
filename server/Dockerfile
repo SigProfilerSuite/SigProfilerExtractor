@@ -8,7 +8,8 @@
 #
 # The image holds SigProfilerExtractor (unchanged, from GitHub) and the gateway
 # from gateway/: a token sign-in, upload, .zip download and the resources
-# panel. Data lives in the mounted folder, never in the image.
+# panel. Data lives in the mounted folder, never in the image. The cluster's
+# enroot image (build_sqsh.sh) is built by the same gateway/install.sh.
 
 FROM python:3.13-slim
 
@@ -18,23 +19,22 @@ ARG SPE_REF=b7cd956c119d8d12d9ead98c6f11a38e11e7aeab
 # runs on servers without one; "cpu" makes the image about 4 GB smaller.
 ARG TORCH=cu128
 
-# git: pip installs SigProfilerExtractor from its repository, and its version
-# number comes from the git history.
-RUN apt-get update \
- && apt-get install -y --no-install-recommends git \
- && rm -rf /var/lib/apt/lists/*
-
-# PyTorch first, from its own index, so SigProfilerExtractor keeps this build.
-RUN pip install --no-cache-dir torch --index-url "https://download.pytorch.org/whl/${TORCH}"
-RUN pip install --no-cache-dir \
-      "git+https://github.com/SigProfilerSuite/SigProfilerExtractor.git@${SPE_REF}"
+# Installed before the rest of gateway/ is copied, so editing the gateway
+# does not reinstall PyTorch.
+COPY gateway/install.sh /tmp/install.sh
+RUN SPE_REF="${SPE_REF}" TORCH="${TORCH}" sh /tmp/install.sh && rm /tmp/install.sh
 
 COPY gateway/ /opt/spe-workbench/
 RUN chmod 755 /opt/spe-workbench/entrypoint.sh /opt/spe-workbench/spe-workbench
 
+# The NVIDIA settings ask the container runtime (Docker's NVIDIA toolkit,
+# enroot, Apptainer --nv) to add the GPU driver and nvidia-smi; NVIDIA's own
+# CUDA images set the same. Without them the GPU stays invisible.
 ENV SPE_DATA=/data \
     SPE_PORT=8765 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility
 EXPOSE 8765
 VOLUME /data
 ENTRYPOINT ["/opt/spe-workbench/entrypoint.sh"]

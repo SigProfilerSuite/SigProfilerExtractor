@@ -14,22 +14,25 @@ programs as you, so keep it private.
 
 ## Your own server
 
-On the server, once, get the launcher: copy `gateway/spe-workbench` there, or
-take it out of the image:
+On the server, from a clone of the repository:
+
+```bash
+git clone -b workbench-server https://github.com/SigProfilerSuite/SigProfilerExtractor.git
+cd SigProfilerExtractor/server
+./gateway/spe-workbench start
+```
+
+The first start downloads the image (a few GB); if it is not published, Docker
+or Podman build it from `Dockerfile` instead (10-20 minutes, once). Then it
+starts the app and prints the link. Without a clone, the launcher alone also
+works with a published image; take it out of the image:
 
 ```bash
 docker run --rm --entrypoint cat mishugeb/sigprofilerextractor-workbench \
   /opt/spe-workbench/spe-workbench > spe-workbench && chmod +x spe-workbench
 ```
 
-Then:
-
-```bash
-./spe-workbench start
-```
-
-It downloads the image the first time (a few GB), starts the app, and prints
-the link:
+What `start` prints:
 
 ```
   Open this link in your browser (keep it private: it is the key to the app):
@@ -48,7 +51,8 @@ the link:
 | `./spe-workbench status` | Is it running? |
 | `./spe-workbench logs` | Follow its log |
 | `./spe-workbench stop` | Stop it, and any run in progress |
-| `./spe-workbench update` | Get the newest image and restart |
+| `./spe-workbench update` | Get the newest image and restart (an image built here is rebuilt: `git pull` first) |
+| `./spe-workbench build` | Build the image here from the clone (Docker or Podman) |
 | `./spe-workbench new-token` | New link; the old one stops working |
 
 Options for `start`: `--data DIR` (default `~/sigprofiler-workbench`),
@@ -122,12 +126,22 @@ then open `http://localhost:PORT/?token=...`:
 ssh -N -L PORT:dgxNN.its.albany.edu:PORT si174851@dgx-head01.its.albany.edu
 ```
 
-This uses the clone and venv in this folder rather than the image, with a new
-token per job. Only one Workbench job can run at a time (a second one exits at
-once): runs are tracked by process ID on their own node, in one shared records
-folder. Stop with **Quit** in the Workbench, or `scancel -n spe_workbench`.
-Runs live inside the job, so ending it stops any unfinished run; size `--time`
-to fit.
+The job runs the same image as other servers, as `images/spe-workbench.sqsh`
+with enroot (the cluster's container runtime; Docker is admin-only here), with
+a new token per job. Build or update that image with:
+
+```bash
+sbatch build_sqsh.sh                  # ~10 min; SPE_REF=<tag> sbatch build_sqsh.sh for another version
+```
+
+The next job uses the new image. Inside the container, the lab share
+(`/network/rit/lab/islam_lab`) and your home folder keep their paths, so paste
+paths as they are; uploads, results and run records stay in this folder.
+
+Only one Workbench job can run at a time (a second one exits at once): runs
+are tracked by process ID on their own node, in one shared records folder.
+Stop with **Quit** in the Workbench, or `scancel -n spe_workbench`. Runs live
+inside the job, so ending it stops any unfinished run; size `--time` to fit.
 
 ## Layout
 
@@ -137,11 +151,12 @@ to fit.
 | `gateway/static/` | Its pages, script and styles |
 | `gateway/spe-workbench` | Launcher for your own server |
 | `gateway/entrypoint.sh` | The image's start-up script |
-| `Dockerfile`, `.dockerignore` | The image |
+| `gateway/install.sh` | What goes into the image; used by both builds |
+| `Dockerfile`, `.dockerignore` | The Docker image |
+| `build_sqsh.sh` | The same image for this cluster, as `images/spe-workbench.sqsh` |
 | `run_workbench.sbatch` | The cluster job |
-| `SigProfilerExtractor/` | Unmodified upstream clone (`git pull` to update), for the cluster job |
-| `SigProfilerExtractor/.venv-dashboard/` | Its venv (git-ignored) |
-| `uploads/`, `SigProfilerExtractor_results/` | The cluster job's uploads and results |
+| `SigProfilerExtractor/` | Upstream clone with its own venv, for `./launch_web.sh` (the job no longer uses it) |
+| `uploads/`, `SigProfilerExtractor_results/`, `references/` | The cluster job's uploads, results and genomes |
 | `.cache/sigprofilerextractor/` | The cluster job's run records |
 | `workbench_endpoint.env` | The cluster job's current URL and token (`chmod 600`) |
 | `logs/` | Cluster job logs |
@@ -159,15 +174,12 @@ cluster job is running. Each keeps separate run records: the job's are under
 `.cache/` here, the local launcher's under `~/.cache`. `--stop` on one does
 not stop the other.
 
-Two things to know about the clone's venv:
-
-- **PyTorch was swapped for its CUDA 12.8 build** (the DGX driver, 570,
-  predates CUDA 13). `./launch_web.sh --reinstall` puts the default CUDA 13
-  build back, after which runs still work but cannot use the GPU. To restore:
-  `.venv-dashboard/bin/python -m uv pip install --python .venv-dashboard/bin/python
-  --reinstall-package torch torch --index-url https://download.pytorch.org/whl/cu128`
-- **`./uninstall_web.sh` deletes `.venv-dashboard`**, which the job also uses.
-  Recreate it with `./launch_web.sh --no-launch` (then the PyTorch step above).
+The clone's venv has PyTorch's CUDA 12.8 build (the DGX driver, 570, predates
+CUDA 13). `./launch_web.sh --reinstall` puts the default CUDA 13 build back,
+after which local runs still work but cannot use the GPU. To restore:
+`.venv-dashboard/bin/python -m uv pip install --python .venv-dashboard/bin/python
+--reinstall-package torch torch --index-url https://download.pytorch.org/whl/cu128`.
+The images install the CUDA 12.8 build themselves.
 
 ## Security
 

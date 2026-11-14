@@ -19,6 +19,9 @@
 #   SPE_TOKEN        use this token (32+ characters) instead of the stored one
 #   SPE_HOST_NAME    the server's name, for the printed link and the panel
 #   SPE_PUBLIC_PORT  the port the browser uses, if mapped differently
+#   SPE_SSH_USER     user name for the printed SSH tunnel command
+#   SPE_SSH_VIA      host to tunnel through, when the server itself is not
+#                    reachable by SSH (a cluster's login node)
 #
 set -euo pipefail
 
@@ -55,8 +58,14 @@ fi
 export SPE_GATEWAY_TOKEN="${TOKEN}"
 
 HOST="${SPE_HOST_NAME:-$(hostname -f 2>/dev/null || hostname)}"
-URL="http://${HOST}:${SPE_PUBLIC_PORT:-${PORT}}/?token=${TOKEN}"
+PUBLIC_PORT="${SPE_PUBLIC_PORT:-${PORT}}"
+URL="http://${HOST}:${PUBLIC_PORT}/?token=${TOKEN}"
 (umask 077; printf '%s\n' "${URL}" > "${STATE}/url")
+if [[ -n "${SPE_SSH_VIA:-}" ]]; then
+    TUNNEL="ssh -N -L ${PUBLIC_PORT}:${HOST}:${PUBLIC_PORT} ${SPE_SSH_USER:-you}@${SPE_SSH_VIA}"
+else
+    TUNNEL="ssh -N -L ${PUBLIC_PORT}:localhost:${PUBLIC_PORT} ${SPE_SSH_USER:-you}@${HOST}"
+fi
 
 cat <<EOF
 
@@ -66,10 +75,10 @@ cat <<EOF
 
     ${URL}
 
-  If the port is not reachable from your computer, tunnel it over SSH and
-  open the same link with localhost in place of ${HOST}:
+  If the port is not reachable from your computer, tunnel it over SSH (same
+  port on both ends) and open the same link with localhost in place of ${HOST}:
 
-    ssh -N -L ${SPE_PUBLIC_PORT:-${PORT}}:localhost:${SPE_PUBLIC_PORT:-${PORT}} ${SPE_SSH_USER:-you}@${HOST}
+    ${TUNNEL}
 
   Data folder: ${DATA}
 

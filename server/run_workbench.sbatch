@@ -7,9 +7,10 @@
 #   cat workbench_endpoint.env        # URL with token, once the job is running
 #   scancel -n spe_workbench          # stop it (or Quit in the Workbench)
 #
-# Upload inputs, start runs, follow them, explore results and download them,
-# all from the browser. spe_gateway.py puts a token check in front of the
-# Workbench (it has no login of its own) and adds upload and .zip download.
+# Runs the Workbench image (images/spe-workbench.sqsh, built by build_sqsh.sh
+# from the same recipe as the Dockerfile) with enroot, the cluster's
+# container runtime. Upload inputs, start runs, follow them, explore results
+# and download them, all from the browser.
 #
 # Runs started from the Workbench live inside this job: when the job ends
 # (Quit, scancel, time limit or preemption), any unfinished run is stopped.
@@ -33,28 +34,16 @@
 set -euo pipefail
 
 WORK_ROOT=/network/rit/lab/islam_lab/mishu/sigprofiler_webapp
-REPO="${WORK_ROOT}/SigProfilerExtractor"
-PY="${REPO}/.venv-dashboard/bin/python"
+IMAGE="${WORK_ROOT}/images/spe-workbench.sqsh"
 ENDPOINT_FILE="${WORK_ROOT}/workbench_endpoint.env"
 CLUSTER_DOMAIN=its.albany.edu
+LOGIN_NODE="dgx-head01.${CLUSTER_DOMAIN}"
+# Seen inside the container at the same paths, so any path under them can be
+# pasted into the Workbench as it is. Your home folder is mounted as well.
+LAB_STORAGE=/network/rit/lab/islam_lab
 
-# Everything on lab storage, not the small $HOME:
-#   results     -> $WORK_ROOT/SigProfilerExtractor_results (the Workbench default)
-#   uploads     -> $WORK_ROOT/uploads
-#   run records -> $WORK_ROOT/.cache/sigprofilerextractor
-#   genomes     -> inside the venv, when installed from the Genome card
-export HOME="${WORK_ROOT}"
-export XDG_CACHE_HOME="${WORK_ROOT}/.cache"
-export MPLCONFIGDIR="${WORK_ROOT}/.cache/matplotlib"
-export UV_CACHE_DIR="${WORK_ROOT}/.cache/uv"
-# os.cpu_count() reports the whole node (256), not this job's CPUs, and
-# SigProfilerExtractor's default cpu=-1 means "all of them". Python 3.13+
-# reads this variable instead, so runs use exactly the allocation.
-export PYTHON_CPU_COUNT="${SLURM_CPUS_PER_TASK:-8}"
-mkdir -p "${WORK_ROOT}/uploads" "${WORK_ROOT}/SigProfilerExtractor_results" "${MPLCONFIGDIR}"
-
-if [[ ! -x "${PY}" ]]; then
-    echo "FATAL: ${PY} missing -- set up the venv first (see README.md)" >&2
+if [[ ! -s "${IMAGE}" ]]; then
+    echo "FATAL: ${IMAGE} missing -- build it first: sbatch ${WORK_ROOT}/build_sqsh.sh" >&2
     exit 1
 fi
 
@@ -79,17 +68,16 @@ for _ in $(seq 50); do
     (exec 3<>"/dev/tcp/127.0.0.1/${PORT}") 2>/dev/null || break
 done
 
-# Fresh token per job, handed over in the environment (argv is visible to
-# every user on the node through ps). The port is open to the campus network
-# and the Workbench reads your files and runs processes as you.
-export SPE_GATEWAY_TOKEN=$("${PY}" -c 'import secrets; print(secrets.token_hex(24))')
-URL="http://${FQDN}:${PORT}/?token=${SPE_GATEWAY_TOKEN}"
+# Fresh token per job. The port is open to the campus network and the
+# Workbench reads your files and runs processes as you.
+TOKEN=$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')
+URL="http://${FQDN}:${PORT}/?token=${TOKEN}"
 
 umask 077
 cat > "${ENDPOINT_FILE}" <<EOF
 # Written by run_workbench.sbatch -- current Workbench location.
 WORKBENCH_URL=${URL}
-TOKEN=${SPE_GATEWAY_TOKEN}
+TOKEN=${TOKEN}
 JOB_ID=${SLURM_JOB_ID:-manual}
 NODE=${NODE}
 PORT=${PORT}
@@ -97,19 +85,28 @@ UPDATED=$(date -Is)
 EOF
 
 echo "=== SigProfilerExtractor Workbench, job ${SLURM_JOB_ID:-manual} on ${NODE} ==="
-echo "GPU(s): ${CUDA_VISIBLE_DEVICES:-none}   CPUs: ${SLURM_CPUS_PER_TASK:-?}"
-echo
-echo "Open (campus network or VPN):"
-echo "  ${URL}"
-echo
-echo "Off campus without VPN, tunnel first (same port on both ends), then open"
-echo "  http://localhost:${PORT}/?token=${SPE_GATEWAY_TOKEN}"
-echo "  ssh -N -L ${PORT}:${FQDN}:${PORT} ${USER}@dgx-head01.${CLUSTER_DOMAIN}"
-echo
+echo "GPU(s): ${CUDA_VISIBLE_DEVICES:-none}   CPUs: ${SLURM_CPUS_PER_TASK:-?}   image: ${IMAGE}"
 echo "Stop with Quit in the Workbench, or:  scancel ${SLURM_JOB_ID:-<jobid>}"
-echo
 
-exec "${PY}" "${WORK_ROOT}/gateway/spe_gateway.py" \
-    --port "${PORT}" \
-    --public-host "${FQDN}" \
-    --uploads "${WORK_ROOT}/uploads"
+# The image's entrypoint prints the link and starts the app. Its data folder
+# is this folder, as before: uploads/, SigProfilerExtractor_results/, run
+# records in .cache/, genomes in references/. The settings reach it through
+# the environment (argv is visible to every user on the node through ps).
+export SPE_DATA="${WORK_ROOT}"
+export SPE_PORT="${PORT}"
+export SPE_TOKEN="${TOKEN}"
+export SPE_HOST_NAME="${FQDN}"
+export SPE_SSH_USER="${USER}"
+export SPE_SSH_VIA="${LOGIN_NODE}"
+# os.cpu_count() reports the whole node (256), not this job's CPUs, and
+# SigProfilerExtractor's default cpu=-1 means "all of them". Python 3.13+
+# reads this variable instead, so runs use exactly the allocation.
+export PYTHON_CPU_COUNT="${SLURM_CPUS_PER_TASK:-8}"
+export PYTHONUNBUFFERED=1
+
+# exec: scancel and the time limit's TERM reach the app, which stops its runs.
+exec srun --ntasks=1 \
+    --container-image="${IMAGE}" \
+    --container-mounts="${LAB_STORAGE}:${LAB_STORAGE}" \
+    --container-writable \
+    /opt/spe-workbench/entrypoint.sh

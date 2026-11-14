@@ -9,6 +9,7 @@
 #   ./spe-workbench logs         follow its log
 #   ./spe-workbench stop         stop it, and any run in progress
 #   ./spe-workbench update       get the newest image and restart
+#   ./spe-workbench build        build the image here from this repository (Docker or Podman)
 #   ./spe-workbench new-token    make a new link; the old one stops working
 #
 # Options (start; --data also for the other commands):
@@ -22,6 +23,9 @@
 # Uses Docker or Podman when you can run them, else Apptainer or Singularity
 # (usual on clusters, where Docker is not allowed). Files under your home
 # folder keep the same paths inside the app, so you can paste them as they are.
+#
+# In a clone of the repository (server/gateway/spe-workbench), Docker or Podman
+# build the image from server/Dockerfile when it cannot be downloaded.
 
 set -euo pipefail
 
@@ -36,7 +40,12 @@ GPU=1
 die() { echo "spe-workbench: $*" >&2; exit 1; }
 say() { echo "spe-workbench: $*"; }
 
-usage() { sed -n '3,25p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage() { sed -n '3,28p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+
+# The folder holding the Dockerfile, when this script sits in the repository
+# (server/gateway/spe-workbench -> server/); empty for a copied-out script.
+SOURCE_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+[[ -f "${SOURCE_DIR}/Dockerfile" && -f "${SOURCE_DIR}/gateway/install.sh" ]] || SOURCE_DIR=""
 
 # ------------------------------------------------------------------ arguments
 
@@ -113,6 +122,24 @@ load_settings() {
     fi
 }
 
+# ------------------------------------------------------------------ the image
+
+build_image() {  # docker or podman, from this repository
+    [[ -n "${SOURCE_DIR}" ]] || die "no Dockerfile next to this script; run it from a clone of the repository (server/gateway/spe-workbench)"
+    say "building ${IMAGE} from ${SOURCE_DIR}/Dockerfile (10-20 minutes the first time)..."
+    "${ENGINE}" build -t "${IMAGE}" "${SOURCE_DIR}" || die "the build failed (see above)"
+}
+
+# Here already, else downloaded, else built from this repository.
+ensure_image() {
+    "${ENGINE}" image inspect "${IMAGE}" >/dev/null 2>&1 && return
+    say "downloading ${IMAGE} (once; a few GB)..."
+    "${ENGINE}" pull "${IMAGE}" && return
+    [[ -n "${SOURCE_DIR}" ]] || die "could not download ${IMAGE}"
+    say "${IMAGE} could not be downloaded; building it here instead"
+    build_image
+}
+
 # ------------------------------------------------------------------ start / stop
 
 start_container() {  # docker or podman
@@ -130,6 +157,7 @@ start_container() {  # docker or podman
     if has_gpu; then
         if [[ "${ENGINE}" == podman ]]; then gpu=(--device nvidia.com/gpu=all); else gpu=(--gpus all); fi
     fi
+    ensure_image
     "${ENGINE}" rm -f "${NAME}" >/dev/null 2>&1 || true
     if ! "${ENGINE}" "${args[@]}" "${gpu[@]}" "${IMAGE}" >/dev/null; then
         [[ ${#gpu[@]} -gt 0 ]] || die "${ENGINE} could not start the container (see above)"
@@ -266,9 +294,21 @@ restart_with_settings() {
 
 pull_image() {
     case "${ENGINE}" in
-        docker|podman) "${ENGINE}" pull "${IMAGE}" ;;
+        # A published image is downloaded again; one built here is rebuilt
+        # from this repository (git pull first to get the newest).
+        docker|podman) "${ENGINE}" pull "${IMAGE}" || build_image ;;
         *)             rm -f "${STATE}/image.sif" ;;  # pulled again on start
     esac
+}
+
+do_build() {
+    load_settings
+    case "${ENGINE}" in
+        docker|podman) ;;
+        *) die "building needs Docker or Podman; with ${ENGINE}, publish the image and use start" ;;
+    esac
+    build_image
+    is_running && { say "restart to use it: $0 stop && $0 start"; } || true
 }
 
 new_token() { rm -f "${STATE}/token" "${STATE}/url"; say "new token on the next start"; }
@@ -280,6 +320,7 @@ case "${COMMAND}" in
     url)       do_url ;;
     logs)      do_logs ;;
     update)    restart_with_settings pull_image ;;
+    build)     do_build ;;
     new-token) restart_with_settings new_token ;;
     -h|--help|help) usage 0 ;;
     *)         die "unknown command: ${COMMAND} (see --help)" ;;
