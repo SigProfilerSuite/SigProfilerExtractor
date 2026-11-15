@@ -120,7 +120,9 @@ class Handler(BaseHTTPRequestHandler):
         if not origin or not self._origin_is_this_server(origin):
             return False
         token = self.headers.get("X-Dashboard-Token") or ""
-        return secrets.compare_digest(token, self.server.instance_token)
+        # As bytes: compare_digest raises on a str that is not ASCII.
+        return secrets.compare_digest(token.encode("utf-8", "surrogateescape"),
+                                      self.server.instance_token.encode())
 
     def _send(self, status, body=b"", ctype="application/json", extra=None):
         if isinstance(body, str):

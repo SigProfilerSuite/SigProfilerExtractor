@@ -60,12 +60,54 @@ ADDON = (
     '<script src="/gateway/status.js" defer></script>'
 )
 GATEWAY_FILES = ("login.css", "status.js", "status.css")
+LOGIN_BODY_MAX = 1 << 16   # the sign-in form: a token and a path
+
+
+def token_matches(given: str, token: str) -> bool:
+    """Constant-time, on bytes: compare_digest refuses a str that is not
+    ASCII, and a cookie or form may hold anything."""
+    return secrets.compare_digest(given.encode("utf-8", "surrogateescape"),
+                                  token.encode("utf-8"))
+
+
+def safe_target(target: str) -> str:
+    """Where to go after sign-in: a path on this server, else "/".
+
+    "//host" and "/\\host" both mean another site to a browser (it reads a
+    backslash as a slash), so neither may follow a sign-in; nor may anything
+    with a scheme, a host, or control characters.
+    """
+    if (not isinstance(target, str) or not target.startswith("/")
+            or target[1:2] in ("/", "\\") or "\\" in target
+            or any(ord(c) < 0x20 or ord(c) == 0x7F for c in target)):
+        return "/"
+    parsed = urlparse(target)
+    if parsed.scheme or parsed.netloc:
+        return "/"
+    return target
+
+
+def cpu_set() -> list:
+    """The CPUs this process may run on (all of them where the system cannot
+    say, as on macOS)."""
+    try:
+        return sorted(os.sched_getaffinity(0))
+    except AttributeError:
+        return list(range(os.cpu_count() or 1))
 
 
 class GatewayHandler(workbench.Handler):
     """The Workbench's handler, behind a token check and the gateway routes."""
 
+    def log_message(self, fmt, *args):
+        # Should request lines be logged, never with the token.
+        super().log_message(fmt, *(re.sub(r"token=[^&\s]*", "token=...", a) if isinstance(a, str)
+                                   else a for a in args))
+
     # ------------------------------------------------------------ access
+
+    def _token_ok(self, given: str) -> bool:
+        return token_matches(given, self.server.gateway_token)
 
     def _cookie_name(self) -> str:
         # Browsers share cookies across ports, so name it after this port.
@@ -75,7 +117,7 @@ class GatewayHandler(workbench.Handler):
         for part in (self.headers.get("Cookie") or "").split(";"):
             name, _, value = part.strip().partition("=")
             if name == self._cookie_name():
-                return secrets.compare_digest(value, self.server.gateway_token)
+                return self._token_ok(value)
         return False
 
     def _set_cookie_and_go(self, target: str) -> None:
@@ -105,9 +147,9 @@ class GatewayHandler(workbench.Handler):
         query = parse_qs(url.query)
         given = (query.get("token") or [""])[0]
         if self.command in ("GET", "HEAD") and given:
-            if secrets.compare_digest(given, self.server.gateway_token):
+            if self._token_ok(given):
                 rest = urlencode([(k, v) for k, vs in query.items() if k != "token" for v in vs])
-                self._set_cookie_and_go(url.path + (f"?{rest}" if rest else ""))
+                self._set_cookie_and_go(safe_target(url.path + (f"?{rest}" if rest else "")))
                 return False
         if url.path == "/gateway/login":
             self._login()
@@ -116,26 +158,35 @@ class GatewayHandler(workbench.Handler):
             return True
         if self.command in ("GET", "HEAD") and not url.path.startswith(("/api/", "/gateway/api/")):
             self.send_response(303)
-            self.send_header("Location", "/gateway/login?next=" + quote(self.path, safe=""))
+            self.send_header("Location", "/gateway/login?next=" + quote(safe_target(self.path), safe=""))
             self.send_header("Content-Length", "0")
             self.end_headers()
         else:
+            # Its body, if any, is left unread: end the connection with it.
+            self.close_connection = True
             self._fail("not signed in: open the URL with the token first", 401)
         return False
 
     def _login(self) -> None:
         if self.command == "POST":
-            length = int(self.headers.get("Content-Length") or 0)
+            # Read before the token is known, so bounded: a missing, negative
+            # or huge length is refused rather than read until the client
+            # stops sending.
+            try:
+                length = int(self.headers.get("Content-Length") or "")
+            except ValueError:
+                length = -1
+            if not 0 <= length <= LOGIN_BODY_MAX:
+                self.close_connection = True
+                return self._fail("bad sign-in request", 400)
             form = parse_qs(self.rfile.read(length).decode("utf-8", "replace"))
             token = (form.get("token") or [""])[0].strip()
-            target = (form.get("next") or ["/"])[0]
-            if not target.startswith("/") or target.startswith("//"):
-                target = "/"
-            if secrets.compare_digest(token, self.server.gateway_token):
+            target = safe_target((form.get("next") or ["/"])[0])
+            if self._token_ok(token):
                 return self._set_cookie_and_go(target)
             time.sleep(1)  # slow down guessing
             return self._send(403, _login_page(target, wrong=True), "text/html; charset=utf-8")
-        target = (parse_qs(urlparse(self.path).query).get("next") or ["/"])[0]
+        target = safe_target((parse_qs(urlparse(self.path).query).get("next") or ["/"])[0])
         return self._send(200, _login_page(target), "text/html; charset=utf-8")
 
     def _as_local(self) -> None:
@@ -242,7 +293,7 @@ class Resources:
         self._samples: collections.deque = collections.deque(maxlen=self.KEEP)
         self._slow: dict | None = None
         self._slow_at = 0.0
-        self._cpus = sorted(os.sched_getaffinity(0))
+        self._cpus = cpu_set()
         self.allowed_cpus = allowed_cpus()
         self._cgroup = cgroup_dir()
         self._cpu_usage = self._cgroup_cpu_usage()  # baselines: first readings
@@ -405,7 +456,7 @@ def allowed_cpus() -> int:
     """CPUs this app may use: its CPU set (a SLURM job's CPUs), capped by a
     cgroup CPU quota and by PYTHON_CPU_COUNT when it is set (the launcher's
     --cpus)."""
-    count = len(os.sched_getaffinity(0))
+    count = len(cpu_set())
     base = cgroup_dir()
     if base is not None:
         try:
@@ -547,15 +598,15 @@ def announce(port: int, token: str, url_file: Path | None) -> None:
         fd = os.open(url_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w") as out:
             out.write(url + "\n")
+    # The log this goes to may be readable by others, so no token in it: the
+    # full link is in the url file (owner only), which "spe-server url" prints.
     print(f"""
   SigProfilerExtractor Workbench
 
-  Open this link in your browser (keep it private: it is the key to this app):
-
-    {url}
+  Listening at http://{host}:{port}/ ; the link with its token: spe-server url
 
   If the port is not reachable from your computer, tunnel it over SSH (same
-  port on both ends) and open the same link with localhost in place of {host}:
+  port on both ends) and open the link with localhost in place of {host}:
 
     {tunnel}
 
