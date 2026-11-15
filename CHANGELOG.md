@@ -7,6 +7,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+## [1.6.2] - 2026-11-15
+
+### Added
+- Run the Workbench on a Linux server or a SLURM cluster and use it from the browser on your own computer, with `server/spe-server`. `./spe-server start` runs it on the machine you are logged in to (a lab workstation, a cloud VM, an interactive session on a compute node); `./spe-server submit` runs it from a cluster's login node as a SLURM job on a compute node, asking for `--cpus`, `--memory`, `--gpus` and `--time`, with any other sbatch options after `--`. It needs no admin rights, Docker or system Python: uv installs Python 3.13, PyTorch (the CUDA 12.8 build by default, or `--torch cpu`) and SigProfilerExtractor from the clone into a data folder (`spe-data` beside the clone, or `--data`). It prints a link with a private token, and the SSH tunnel command for when the server's port cannot be reached directly. `url`, `status`, `logs`, `stop`, `update`, `install` and `new-token` manage it afterwards, also for a SLURM job. On a login node that caps the memory of each program (`ulimit -v`), `submit` leaves the install to the job. See the Workbench on a Server or Cluster page of the documentation.
+- On a server, the unchanged Workbench runs behind a small gateway (`server/gateway/spe_gateway.py`) that admits only requests carrying the token, kept in a cookie after the first visit. A panel under the top bar's "ready" pill shows the CPUs, memory and GPUs the app has, their recent use and, for a SLURM job, the time left; runs cannot ask for more CPUs than the app has.
+- The Workbench can draw its own file browser for the folders of the machine it runs on, starting from Home, Results, Data folder or Uploads. It is used on a server, where no native file picker can open, and on your own computer when the native picker fails.
+- **Upload** buttons beside each input copy files from the browser's computer into a new folder (streamed to disk, up to 8 GB), which becomes the input.
+- Results offer **Download all as .zip**, which packs the whole results folder into one file and shows its size before the download starts. It waits until no run is writing to the folder.
+
+### Changed
+- Opening results no longer brings you back to Results if you moved to another tab while they loaded.
+
 ## [1.6.1] - 2026-11-11
 
 ### Changed
