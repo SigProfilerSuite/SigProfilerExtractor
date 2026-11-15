@@ -253,6 +253,35 @@ get_uv() {
     rm -rf "${tmp}"
 }
 
+# A cluster's login node may cap the memory each program can address
+# (ulimit -v; 500 MB on some), far too little to install or import PyTorch.
+# There submit leaves the install to the job, on a compute node.
+MEM_CAP_KB="$(ulimit -v 2>/dev/null || echo unlimited)"
+capped() { [[ "${MEM_CAP_KB}" =~ ^[0-9]+$ ]] && (( MEM_CAP_KB < 4194304 )); }
+cap_text() { echo "$(( MEM_CAP_KB / 1024 )) MB"; }
+INSTALL_IN_JOB=0
+
+cap_refusal() {
+    local or=""
+    [[ "$1" == install ]] && or="
+
+  or install from a compute node: srun --cpus-per-task 4 --mem 16G --time 1:00:00 --pty $0 install"
+    die "this machine lets each program use at most $(cap_text) of memory (ulimit -v),
+  too little to $1 PyTorch: it is a login node, for editing and submitting jobs.
+  Run it as a SLURM job instead, which installs it on a compute node first:
+
+    $0 submit${or}"
+}
+
+# An install that failed inside a job may be a compute node without internet.
+install_failed() {
+    local hint=""
+    [[ -n "${SLURM_JOB_ID:-}" ]] && hint="
+  If this cluster's compute nodes cannot reach the internet, install from a
+  machine that can, with the same data folder: $0 install --data ${DATA}"
+    die "$1 (see above)${hint}"
+}
+
 # Once, and again when the package's requirements or the PyTorch build
 # change. The clone is installed in editable mode, so a pulled update to
 # SigProfilerExtractor takes effect on the next start without reinstalling.
@@ -260,6 +289,15 @@ install() {
     local want
     want="$( (cat "${REPO_DIR}/setup.py" "${REPO_DIR}/pyproject.toml"; echo "${TORCH} ${PYTHON_VERSION}") | cksum | cut -d' ' -f1)"
     if [[ "${1:-}" != force && -x "${VENV}/bin/python" && "$(cat "${INST}/installed" 2>/dev/null)" == "${want}" ]]; then
+        return
+    fi
+    if capped; then
+        # submit, and update of a job (which submits again): the job installs.
+        [[ "${COMMAND}" =~ ^(submit|update)$ ]] || cap_refusal install
+        rm -f "${INST}/installed"
+        INSTALL_IN_JOB=1
+        say "this login node lets each program use at most $(cap_text) of memory, too little to
+  install PyTorch, so the job installs it on its compute node first (several minutes, once)"
         return
     fi
     command -v git >/dev/null 2>&1 || die "installing needs git (the version number comes from the clone's history)"
@@ -272,15 +310,15 @@ install() {
   (a few GB to download; several minutes, once)..."
     rm -f "${INST}/installed"
     "${UV}" venv --quiet --clear --python "${PYTHON_VERSION}" "${VENV}" \
-        || die "could not create the Python environment (see above)"
+        || install_failed "could not create the Python environment"
     # PyTorch first, from its own index, so SigProfilerExtractor keeps this build.
     "${UV}" pip install --quiet --python "${VENV}/bin/python" torch \
         --index-url "https://download.pytorch.org/whl/${TORCH}" \
-        || die "could not install PyTorch (${TORCH}) (see above)"
+        || install_failed "could not install PyTorch (${TORCH})"
     "${UV}" pip install --quiet --python "${VENV}/bin/python" -e "${REPO_DIR}" \
-        || die "could not install SigProfilerExtractor (see above)"
+        || install_failed "could not install SigProfilerExtractor"
     "${VENV}/bin/python" -I -c "import SigProfilerExtractor, torch; print('spe-server: SigProfilerExtractor', SigProfilerExtractor.__version__, '/ PyTorch', torch.__version__)" \
-        || die "the install does not work (see above)"
+        || install_failed "the install does not work"
     echo "${want}" > "${INST}/installed"
     say "installed"
 }
@@ -327,6 +365,7 @@ running_already() {
 do_start() {
     reuse_settings
     running_already && return
+    capped && cap_refusal run
     [[ "${GIVEN}" == *" MEMORY "* && -n "${MEMORY}" ]] && say "--memory limits only a SLURM job; kept for the next submit"
     [[ "${GIVEN}" == *" GPUS "* && -n "${GPUS}" ]] && say "--gpus is what a SLURM job asks for; kept for the next submit"
     rm -f "${STATE}/url"
@@ -504,7 +543,8 @@ print_request() {
 }
 
 # The app as a SLURM job: installed here first (compute nodes may have no
-# internet), then the job runs "spe-server run" for as long as it lasts.
+# internet), or by the job when this login node caps memory (see capped),
+# then the job runs "spe-server run" for as long as it lasts.
 do_submit() {
     command -v sbatch >/dev/null 2>&1 || die "sbatch not found: this server does not submit SLURM jobs"
     reuse_settings
@@ -528,10 +568,17 @@ do_submit() {
     JOB_ID="${JOB_ID%%;*}"
     save_settings
     say "SLURM job ${JOB_ID} submitted"
-    # Wait a while for it to start and answer; a queued job is left to start later.
-    local waited=0 state
-    while (( waited++ < 180 )); do
+    # Wait a while for it to start and answer; a queued job is left to start
+    # later. A job that installs first takes minutes more.
+    local waited=0 state limit=180 told=0
+    (( INSTALL_IN_JOB )) && limit=300      # polled every 5 s: 25 minutes
+    while (( waited++ < limit )); do
         state="$(job_state)"
+        if (( INSTALL_IN_JOB && ! told )) && [[ "${state}" == RUNNING ]]; then
+            say "the job is running on $(squeue -h -j "${JOB_ID}" -o %N 2>/dev/null) and installing; the link follows
+  when it is ready (Ctrl-C here is safe: the job goes on; then: $0 url). Its log: $0 logs"
+            told=1
+        fi
         if [[ -z "${state}" || "${state}" =~ ^(FAILED|CANCELLED|TIMEOUT|COMPLETED|NODE_FAIL|OUT_OF_MEMORY)$ ]]; then
             tail -n 30 "${STATE}/server.log" 2>/dev/null || true
             die "the job ended (log above: ${STATE}/server.log)"
@@ -541,10 +588,12 @@ do_submit() {
             say "it runs until the job's time limit or: $0 stop"
             return
         fi
-        sleep 1
+        sleep $(( INSTALL_IN_JOB ? 5 : 1 ))
     done
     if [[ "$(job_state)" == PENDING ]]; then
         say "the job is waiting for resources ($(squeue -h -j "${JOB_ID}" -o %r 2>/dev/null)); once it starts: $0 url"
+    elif (( INSTALL_IN_JOB )); then
+        say "the job is still installing or starting; see: $0 logs, then: $0 url"
     else
         say "the job has started but the app is not answering yet; see: $0 logs, then: $0 url"
     fi

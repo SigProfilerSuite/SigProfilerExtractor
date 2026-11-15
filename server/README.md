@@ -167,7 +167,11 @@ the login node:
 
 It installs on the login node first (compute nodes often have no internet),
 submits a job that runs the Workbench, waits for the job to start, and prints
-the link. Before submitting it shows exactly what the job asks for:
+the link. Some login nodes cap the memory each program may use (`ulimit -v`
+shows it; 500 MB on some), too little to install or load PyTorch. There it
+says so and the job installs everything on its compute node first instead,
+which adds several minutes to the first submit; `./spe-server logs` follows
+it. Before submitting it shows exactly what the job asks for:
 
 ```
 spe-server: submitting a SLURM job that asks for:
@@ -319,6 +323,12 @@ such as a home folder. Give a folder on a larger one; it is remembered:
 reach the internet. If it uses a proxy, set `https_proxy` before starting. On
 a cluster, install on the login node: `submit` does that, or run
 `./spe-server install` there.
+
+**"memory allocation of ... bytes failed" or "Aborted (core dumped)" while
+installing**: the login node caps each program's memory (`ulimit -v`). The
+launcher now notices this and leaves the install to the job: `git pull`, then
+`./spe-server submit` again. `start` and `install` refuse to run on such a
+node, since PyTorch cannot load there.
 
 **The link does not load (it times out)**: use the SSH tunnel ([step 3](#3-open-it-in-your-browser)).
 
