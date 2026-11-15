@@ -10,7 +10,8 @@ and SigProfilerPlotting.
 
 **Prefer not to write code?** SigProfilerExtractor also has a graphical interface, the
 **SigProfilerExtractor Workbench**: double-click to install and start it on macOS or Windows,
-set up a run in your browser, and explore the results in an interactive dashboard. See
+set up a run in your browser, and explore the results in an interactive dashboard. It also
+runs on a Linux server or SLURM cluster, used from the browser on your own computer. See
 [Graphical interface](#web_app).
 
 ## Documentation
@@ -20,6 +21,7 @@ Full documentation is available in `docs/` (rendered via MkDocs): https://sigpro
 # Table of contents
 - [Installation](#installation)
 - [Graphical interface (Workbench)](#web_app)
+  - [On a server or cluster](#web_app_server)
 - [Functions](#functions)
   - [importdata](#importdata)
   - [sigProfilerExtractor](#sigProfilerExtractor)
@@ -63,7 +65,8 @@ Next, open a python interpreter and import the SigProfilerExtractor module. Plea
 ## <a name="web_app"></a> Graphical interface: the SigProfilerExtractor Workbench
 
 The Workbench runs SigProfilerExtractor from your browser, without writing code. It runs
-entirely on your own computer: your data never leaves it.
+entirely on your own computer: your data never leaves it. To run it on a server or cluster
+instead, see [On a server or cluster](#web_app_server).
 
 ![The SigProfilerExtractor Workbench](https://raw.githubusercontent.com/SigProfilerSuite/SigProfilerExtractor/master/docs/assets/images/web-app/home.png)
 
@@ -110,6 +113,44 @@ Click **Quit** in the Workbench, then double-click `uninstall_web.command` (macO
 the Workbench's Python environment (including any reference genome installed through the
 Workbench) and its run records. It keeps your results and this folder; delete those
 yourself if you no longer need them.
+
+### <a name="web_app_server"></a> On a server or cluster
+
+To run the Workbench on a Linux server or a SLURM cluster and use it from the browser on
+your own computer, with no admin rights, Docker or system Python needed:
+
+```bash
+git clone -b workbench-server https://github.com/SigProfilerSuite/SigProfilerExtractor.git
+cd SigProfilerExtractor/server
+./spe-server start     # runs it on this machine
+./spe-server submit    # or, from a cluster's login node: runs it as a SLURM job
+```
+
+`start` runs the Workbench on the machine you are logged in to (a lab workstation, a
+cloud VM, an interactive session on a compute node), in the background until you stop it.
+`submit` is for a cluster: from the login node it submits a SLURM job, so the Workbench
+runs on a compute node with its own CPUs, memory and GPU until the job's time limit
+(`./spe-server submit --gpus 1 --cpus 32 --memory 128G --time 2-00:00:00`). Either way it
+installs everything (about 8 GB, with PyTorch) into `spe-data` beside the clone, or the
+folder given with `--data`, and prints a link with a token: keep it private.
+
+On a server the Workbench draws its own file browser for the server's folders, can
+**upload** inputs from your computer, and offers each results folder as one **.zip**.
+
+| Command | What it does |
+|---|---|
+| `./spe-server start` | Start it and print the link (the first time, it installs) |
+| `./spe-server submit` | Run it as a SLURM job instead |
+| `./spe-server url` | Print the link and the SSH tunnel command again |
+| `./spe-server status` | Is it running? (a job: where, and the time left) |
+| `./spe-server logs` | Follow its log |
+| `./spe-server stop` | Stop it, and any run in progress (a job: cancel it) |
+| `./spe-server update` | Reinstall from the clone and restart (`git pull` first) |
+| `./spe-server new-token` | New link; the old one stops working |
+
+Opening the link from off campus (SSH tunnel), every option, SLURM settings and
+troubleshooting: [server/README.md](server/README.md), also
+[on the documentation site](https://sigprofilersuite.github.io/SigProfilerExtractor/8.%20Workbench%20on%20a%20Server.html).
 
 The [Workbench guide](https://sigprofilersuite.github.io/SigProfilerExtractor/7.%20Web%20App.html)
 covers every screen in detail.

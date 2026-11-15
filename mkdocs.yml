@@ -44,6 +44,7 @@ nav:
       - '6. Output - Suggested Solution': '6. Output - Suggested Solution.md'
   - Graphical Interface:
       - '7. Graphical Interface (Workbench)': '7. Web App.md'
+      - '8. Workbench on a Server or Cluster': '8. Workbench on a Server.md'
 
 plugins:
   - search
@@ -58,6 +59,11 @@ markdown_extensions:
   - pymdownx.details
   - pymdownx.tabbed:
       alternate_style: true
+  - pymdownx.snippets:
+      # A page may include a file from the repository, so it has one source
+      # (docs/8. Workbench on a Server.md is server/README.md).
+      base_path: ["."]
+      check_paths: true
 
 extra_css:
   - assets/stylesheets/extra.css
