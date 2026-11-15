@@ -93,6 +93,9 @@ done
 [[ "${PORT}" =~ ^[0-9]+$ ]] || die "--port must be a number"
 [[ -z "${CPUS}" || "${CPUS}" =~ ^[0-9]+$ ]] || die "--cpus must be a whole number"
 [[ -z "${GPUS}" || "${GPUS}" =~ ^[0-9]+$ ]] || die "--gpus must be a whole number"
+[[ -z "${MEMORY}" || "${MEMORY}" =~ ^[0-9]+[KMGTkmgt]?$ ]] || die "--memory: a size such as 64G or 500M"
+[[ -z "${TIME}" || "${TIME}" =~ ^(([0-9]+-)?[0-9]+(:[0-9]+){0,2}|UNLIMITED|infinite)$ ]] \
+    || die "--time: minutes, H:MM:SS or D-HH:MM:SS (e.g. 8:00:00, 2-00:00:00)"
 [[ "${TORCH}" =~ ^(cpu|cu[0-9]+)$ ]] || die "--torch: cu128 or cpu (or another PyTorch build, e.g. cu126)"
 
 free_gb() { df -Pk "$1" 2>/dev/null | awk 'NR == 2 { print int($4 / 1048576) }'; }
@@ -130,7 +133,10 @@ if [[ "${DATA_GIVEN}" == 1 && "${COMMAND}" =~ ^(start|submit|install)$ ]]; then
     mkdir -p "$(dirname "${REMEMBERED}")" && printf '%s\n' "${DATA}" > "${REMEMBERED}"
 fi
 STATE="${DATA}/.workbench"
-mkdir -p "${STATE}"
+# Owner only: it holds the token, the link and the log, launch.env (which
+# this script sources) and the Python install, so on a shared disk nobody
+# else may read it or plant files in it.
+mkdir -p -m 700 "${STATE}" && chmod 700 "${STATE}" || die "cannot make ${STATE} private"
 SETTINGS="${STATE}/launch.env"
 INST="${STATE}/install"          # uv, Python, the environment
 VENV="${INST}/venv"
@@ -148,6 +154,21 @@ url_port() { local u; u="$(<"${STATE}/url")"; u="${u#http://}"; u="${u%%/*}"; pr
 # The SLURM job's state (RUNNING, PENDING, ...), or nothing once it has ended.
 job_state() { [[ -n "${JOB_ID}" ]] && squeue -h -j "${JOB_ID}" -o %T 2>/dev/null | head -n 1; }
 
+# The app's process, if server.pid names one on this host that is still
+# this app (after a reboot the number may belong to anything).
+app_pid() {
+    local pid host
+    [[ -s "${STATE}/server.pid" ]] || return 1
+    read -r pid host < "${STATE}/server.pid"
+    [[ "${pid}" =~ ^[0-9]+$ ]] || return 1
+    [[ -z "${host}" || "${host}" == "${HOST_FQDN}" ]] || return 1
+    kill -0 "${pid}" 2>/dev/null || return 1
+    if [[ -r "/proc/${pid}/cmdline" ]]; then
+        tr '\0' ' ' < "/proc/${pid}/cmdline" | grep -q -e spe_gateway -e gateway/entrypoint.sh || return 1
+    fi
+    printf '%s' "${pid}"
+}
+
 # A start on another server sharing this data folder (a lab share) cannot be
 # checked by its process ID from here, only by its link answering.
 is_running() {
@@ -156,13 +177,17 @@ is_running() {
         return
     fi
     [[ -s "${STATE}/server.pid" ]] || return 1
-    local pid host
-    read -r pid host < "${STATE}/server.pid"
-    if [[ -z "${host}" || "${host}" == "${HOST_FQDN}" ]]; then
-        kill -0 "${pid}" 2>/dev/null
-    else
+    if [[ -n "$(running_elsewhere)" ]]; then
         [[ -s "${STATE}/url" ]] && port_open "$(url_port)" "$(url_host)"
+    else
+        app_pid >/dev/null
     fi
+}
+
+# An empty log only its owner can read (the gateway prints no token, but a
+# log still shows file names and runs).
+fresh_log() {
+    ( umask 077; : > "${STATE}/server.log" ) && chmod 600 "${STATE}/server.log"
 }
 
 running_elsewhere() {
@@ -171,19 +196,15 @@ running_elsewhere() {
     [[ -n "${host:-}" && "${host}" != "${HOST_FQDN}" ]] && printf '%s' "${host}"
 }
 
+# Every value quoted: the file is sourced.
 save_settings() {
-    cat > "${SETTINGS}" <<EOF
-PORT=${PORT}
-CPUS=${CPUS}
-MEMORY=${MEMORY}
-GPU=${GPU}
-GPUS=${GPUS}
-TORCH=${TORCH}
-TIME=${TIME}
-SBATCH_ARGS=($(for a in ${SBATCH_ARGS[@]+"${SBATCH_ARGS[@]}"}; do printf '%q ' "${a}"; done))
-JOB_ID=${JOB_ID}
-VIA=${VIA}
-EOF
+    {
+        local var
+        for var in PORT CPUS MEMORY GPU GPUS TORCH TIME JOB_ID VIA; do
+            printf '%s=%q\n' "${var}" "${!var}"
+        done
+        printf 'SBATCH_ARGS=(%s)\n' "$(for a in ${SBATCH_ARGS[@]+"${SBATCH_ARGS[@]}"}; do printf '%q ' "${a}"; done)"
+    } > "${SETTINGS}"
 }
 
 # The last start's settings, for stop/status/url/logs.
@@ -373,7 +394,8 @@ do_start() {
     save_settings
     say "starting..."
     # In the background, in its own session, so stop can end it and every run it started.
-    setsid nohup "${CMD[@]}" > "${STATE}/server.log" 2>&1 < /dev/null &
+    fresh_log
+    setsid nohup "${CMD[@]}" >> "${STATE}/server.log" 2>&1 < /dev/null &
     echo "$! ${HOST_FQDN}" > "${STATE}/server.pid"
     # Ready once it has opened a port (the first free one from PORT, which
     # the app itself finds) and written the link with it.
@@ -409,13 +431,24 @@ do_stop() {
         return
     fi
     local elsewhere; elsewhere="$(running_elsewhere || true)"
-    if [[ -n "${elsewhere}" ]] && is_running; then
-        die "it runs on ${elsewhere}; stop it there: ssh ${elsewhere} ${SELF} stop --data ${DATA}"
+    if [[ -n "${elsewhere}" ]]; then
+        if is_running; then
+            die "it runs on ${elsewhere}; stop it there: ssh ${elsewhere} ${SELF} stop --data ${DATA}"
+        fi
+        rm -f "${STATE}/server.pid"      # that start's link no longer answers
+        say "not running"
+        return
     fi
-    if is_running; then
-        local pid; read -r pid _ < "${STATE}/server.pid"
+    local pid
+    if pid="$(app_pid)"; then
+        # SIGTERM first, to the whole session: the app stops its runs, as with Quit.
         kill -TERM -- "-${pid}" 2>/dev/null || kill -TERM "${pid}" 2>/dev/null || true
         for _ in $(seq 30); do kill -0 "${pid}" 2>/dev/null || break; sleep 1; done
+        if kill -0 "${pid}" 2>/dev/null; then
+            kill -KILL -- "-${pid}" 2>/dev/null || kill -KILL "${pid}" 2>/dev/null || true
+            for _ in $(seq 5); do kill -0 "${pid}" 2>/dev/null || break; sleep 1; done
+        fi
+        kill -0 "${pid}" 2>/dev/null && die "process ${pid} is still running; it may need: kill -9 ${pid}"
     fi
     rm -f "${STATE}/server.pid"
     say "stopped"
@@ -556,9 +589,11 @@ do_submit() {
     install
     VIA="${HOST_FQDN}"
     rm -f "${STATE}/url" "${STATE}/server.pid"
+    # SLURM appends to the log made private here, rather than making its own.
+    fresh_log
     # TERM a minute before the time limit, so the app stops its runs cleanly.
     local args=(--parsable --job-name "spe-server-$(id -un)" --output "${STATE}/server.log"
-                --cpus-per-task "${CPUS}" --mem "${MEMORY}" --signal=B:TERM@60)
+                --open-mode=append --cpus-per-task "${CPUS}" --mem "${MEMORY}" --signal=B:TERM@60)
     [[ -n "${GPUS}" && "${GPUS}" != 0 ]] && args+=(--gres "gpu:${GPUS}")
     [[ -n "${TIME}" ]] && args+=(--time "${TIME}")
     args+=(${SBATCH_ARGS[@]+"${SBATCH_ARGS[@]}"})

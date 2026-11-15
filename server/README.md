@@ -380,6 +380,18 @@ it in shared documents or chats. `./spe-server new-token` replaces it. The
 port is plain HTTP, so on a network you do not trust, use the SSH tunnel
 instead of opening the port.
 
+- **Only you can read the token.** It is kept in `.workbench/` in the data
+  folder, which is private to you (mode 700), with the link (`url`, 600).
+  The log, `.workbench/server.log`, never holds it; `./spe-server url`
+  prints the link.
+- **Browsers do not keep cookies apart by port.** After you sign in, your
+  browser sends the Workbench's cookie (`spe_gateway_<port>`, which holds
+  the token) to every service on that server's name, whatever the port,
+  including someone else's app on the same server. Jupyter has the same
+  limitation. Do not open other people's services on that server in the
+  browser you sign in with, or use the SSH tunnel, whose `localhost`
+  address is yours alone.
+
 ## How it works
 
 `gateway/spe_gateway.py` imports the Workbench's own server and handler. The
