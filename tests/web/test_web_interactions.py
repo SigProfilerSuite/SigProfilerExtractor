@@ -483,3 +483,99 @@ def test_the_top_bar_shows_the_installed_version(page, monkeypatch, version, sho
     page.reload()
     page.wait_for_selector("#exampleSel option[value='sbs96']", state="attached")
     _wait_until(lambda: page.text_content("#envVersion") == shown)
+
+
+# ------------------------------------------------------- files on a server
+
+
+@pytest.fixture
+def server_page(tmp_path, monkeypatch):
+    """The Workbench as a server deployment runs it: no native picker, so the
+    page draws its own; uploads go to a folder of the server's choosing."""
+    monkeypatch.setattr(jobs, "RUNJOB_MODULE", "tests.web.fixtures.fake_runjob")
+    srv = server.make_server("127.0.0.1", 0, tmp_path / "state" / "jobs")
+    srv.picker = "page"
+    srv.home = tmp_path / "home"
+    srv.home.mkdir()
+    srv.uploads = tmp_path / "uploads"
+    thread = threading.Thread(target=srv.serve_forever, daemon=True)
+    thread.start()
+    with playwright_sync_api.sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        browser_page = browser.new_page(viewport={"width": 1280, "height": 900}, accept_downloads=True)
+        errors = []
+        browser_page.on("pageerror", lambda e: errors.append(str(e)))
+        browser_page.goto(f"http://127.0.0.1:{srv.server_address[1]}/")
+        browser_page.wait_for_selector("#exampleSel option[value='sbs96']", state="attached")
+        try:
+            yield browser_page, srv
+        finally:
+            browser.close()
+            srv.shutdown()
+            thread.join(timeout=5)
+            srv.server_close()
+    assert errors == [], f"uncaught page errors: {errors}"
+
+
+def test_without_a_native_picker_the_page_draws_its_own(server_page):
+    page, srv = server_page
+    (srv.home / "inputs").mkdir()
+    (srv.home / "inputs" / "cohort.SBS96.all").write_text(Path(SBS).read_text())
+    page.click("#tab-run")
+    page.check("input[name='kind'][value='matrix']")
+    page.click("#inputChoose")
+    page.wait_for_selector("#picker[open]")
+    assert page.text_content("#pickerTitle") == "Choose the mutation matrix"
+    assert page.is_hidden("#pickerUse")  # a file is wanted: clicking one chooses it
+    _wait_text(page.locator("#pickerPath"), str(srv.home))
+    page.click("#pickerEntries .e:has-text('inputs')")
+    _wait_text(page.locator("#pickerPath"), "inputs")
+    page.click("#pickerEntries .e:has-text('cohort.SBS96.all')")
+    page.wait_for_selector("#picker", state="hidden")
+    page.wait_for_selector("#inputInfo .tile")
+    assert page.input_value("#inputPath") == str(srv.home / "inputs" / "cohort.SBS96.all")
+
+    # A folder picker: files are shown but only the folder can be used.
+    page.click("#outputBrowse")
+    page.wait_for_selector("#picker[open]")
+    assert page.is_visible("#pickerUse")
+    page.click("#pickerPlaces button:has-text('Home')")
+    _wait_text(page.locator("#pickerPath"), str(srv.home))
+    page.click("#pickerUse")
+    page.wait_for_selector("#picker", state="hidden")
+    _wait_until(lambda: page.input_value("#outputPath") == str(srv.home))
+
+
+def test_an_uploaded_input_is_used_from_where_it_landed(server_page):
+    page, srv = server_page
+    page.click("#tab-run")
+    page.check("input[name='kind'][value='matrix']")
+    with page.expect_file_chooser() as chooser:
+        page.click("#inputUpload")
+    assert not chooser.value.is_multiple()  # a matrix is one file
+    chooser.value.set_files(SBS)
+    page.wait_for_selector("#inputInfo .tile")
+    used = Path(page.input_value("#inputPath"))
+    assert used.name == "Samples_SBS.txt" and used.parent.parent == srv.uploads
+    assert used.read_text() == Path(SBS).read_text()
+
+    page.check("input[name='kind'][value='vcf']")
+    with page.expect_file_chooser() as chooser:
+        page.click("#inputUpload")
+    assert chooser.value.is_multiple()  # a folder of calls is many files
+
+
+def test_results_download_whole_as_one_zip(server_page, tmp_path):
+    import zipfile
+
+    page, _ = server_page
+    out = _spe_output(tmp_path / "my_run")
+    page.fill("#openPath", str(out))
+    page.press("#openPath", "Enter")
+    page.wait_for_selector("#resultsBody:not(.hidden)")
+    _wait_text(page.locator("#archiveSize"), "files")
+    with page.expect_download() as download:
+        page.click("#archiveBtn")
+    assert download.value.suggested_filename == "my_run.zip"
+    names = zipfile.ZipFile(download.value.path()).namelist()
+    assert "my_run/JOB_METADATA.txt" in names and "my_run/reports.html" in names

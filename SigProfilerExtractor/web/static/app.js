@@ -100,8 +100,115 @@ function whenAt(sec) {
   return new Date(sec * 1000).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
-// The server owns each picker's kind and title; the page only names which one.
-async function pickPath(purpose) { return (await post('/api/dialog', { purpose })).path; }
+/* Choosing a path. The server owns each picker's kind and title; the page only
+   names which one. On the user's own computer that opens the operating
+   system's picker. Where none can open (a server, reached from another
+   computer's browser), the page draws its own from the server's folders. */
+async function pickPath(purpose) {
+  if (state.env && state.env.picker === 'page') return pagePick(purpose);
+  try { return (await post('/api/dialog', { purpose })).path; } catch (e) {
+    toast(`${e.message}. Showing the Workbench's own picker instead.`);
+    return pagePick(purpose);
+  }
+}
+
+// Where each picker opens: beside what its field already holds, if anything.
+const PICK_FIELD = {
+  input_vcf: 'inputPath', input_matrix: 'inputPath', input_bedpe: 'inputPath', input_seg: 'inputPath',
+  output: 'outputPath', results: 'openPath', seeds: 'seedsPath', volume: 'volumePath',
+};
+const picker = { kind: 'folder', path: null, chosen: null, resolve: null, last: '' };
+
+function pagePick(purpose) {
+  const spec = ((state.env && state.env.pickers) || {})[purpose] || { kind: 'folder', title: 'Choose a folder' };
+  picker.kind = spec.kind;
+  picker.chosen = null;
+  $('pickerTitle').textContent = spec.title;
+  $('pickerUse').classList.toggle('hidden', spec.kind !== 'folder');
+  $('pickerHint').textContent = spec.kind === 'folder' ? 'Open a folder, then use it.' : 'Click a file to choose it.';
+  renderPlaces();
+  const field = PICK_FIELD[purpose] && $(PICK_FIELD[purpose]);
+  // The server opens the nearest folder that exists, so a planned output
+  // folder, or a file, opens where it would be.
+  const start = (field && field.value.trim()) || picker.last || '';
+  return new Promise((resolve) => {
+    picker.resolve = resolve;
+    renderPicker(start);
+    $('picker').showModal();
+  });
+}
+
+function renderPlaces() {
+  const box = $('pickerPlaces');
+  clear(box);
+  ((state.env && state.env.places) || []).forEach((pl) => {
+    const b = el('button', 'btn sm', pl.name);
+    b.type = 'button';
+    b.title = pl.path;
+    b.addEventListener('click', () => renderPicker(pl.path));
+    box.appendChild(b);
+  });
+}
+
+let pickerSeq = 0;
+async function renderPicker(path) {
+  const seq = ++pickerSeq;
+  const box = $('pickerEntries');
+  let d;
+  try { d = await get(`/api/browse?${q({ path: path || '' })}`); } catch (e) {
+    if (seq !== pickerSeq) return;
+    if (path && picker.path === null) return renderPicker('');  // a bad start: open the default
+    toast(e.message);
+    return;
+  }
+  if (seq !== pickerSeq) return;
+  picker.path = d.path;
+  picker.last = d.path;
+  $('pickerPath').textContent = d.path;
+  clear(box);
+  if (d.parent) {
+    const up = el('button', 'e');
+    up.type = 'button';
+    up.appendChild(el('span', 'n', '.. up one level'));
+    up.addEventListener('click', () => renderPicker(d.parent));
+    box.appendChild(up);
+  }
+  // Windows: "up" stops at the top of a drive, so the other drives are offered.
+  const here = (d.path || '').slice(0, 2).toUpperCase();
+  (d.drives || []).filter((v) => v.slice(0, 2).toUpperCase() !== here).forEach((v) => {
+    const b = el('button', 'e');
+    b.type = 'button';
+    b.appendChild(el('span', 'n', `${v.slice(0, 2)} drive`));
+    b.addEventListener('click', () => renderPicker(v));
+    box.appendChild(b);
+  });
+  d.entries.forEach((e) => {
+    const b = el('button', 'e');
+    b.type = 'button';
+    b.appendChild(el('span', 'n', (e.dir ? '\u{1F4C1} ' : '') + e.name));
+    if (e.hint) b.appendChild(pill(e.hint === 'results' ? 'good' : 'flat', e.hint));
+    if (!e.dir) b.appendChild(el('span', 's', bytes(e.bytes)));
+    if (e.dir) b.addEventListener('click', () => renderPicker(e.path));
+    else if (picker.kind === 'file') b.addEventListener('click', () => closePicker(e.path));
+    else b.disabled = true;  // a folder is wanted: files are shown, not chosen
+    box.appendChild(b);
+  });
+  if (!d.entries.length) box.appendChild(el('p', 'empty', 'This folder is empty.'));
+  if (d.truncated) box.appendChild(el('p', 'empty', 'Only the first entries are listed.'));
+}
+
+function closePicker(path) {
+  picker.chosen = path;
+  $('picker').close();
+}
+$('picker').addEventListener('close', () => {
+  const done = picker.resolve;
+  picker.resolve = null;
+  picker.path = null;
+  if (done) done(picker.chosen);
+});
+$('pickerCancel').addEventListener('click', () => closePicker(null));
+$('pickerUse').addEventListener('click', () => closePicker(picker.path));
 
 function svgEl(tag, attrs) {
   const n = document.createElementNS('http://www.w3.org/2000/svg', tag);
@@ -558,6 +665,59 @@ $('inputChoose').addEventListener('click', async () => {
   catch (e) { toast(e.message); } finally { btn.disabled = false; }
 });
 $('inputPath').addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.value.trim()) setInput(e.target.value); });
+
+/* Upload: copy the input from this computer to where the Workbench runs, into
+   a new folder there, then use it like any other input. A folder input takes
+   many files at once; a one-file input takes one. */
+const FOLDER_KINDS = ['vcf', 'bedpe'];
+$('inputUpload').addEventListener('click', () => {
+  const input = $('fileInput');
+  input.value = '';
+  input.multiple = FOLDER_KINDS.includes(state.kind);
+  input.click();
+});
+$('fileInput').addEventListener('change', (ev) => {
+  const chosen = Array.from(ev.target.files || []);
+  if (!chosen.length) return;
+  const kind = state.kind;
+  const info = $('inputInfo');
+  const fd = new FormData();
+  chosen.forEach((f) => fd.append('files', f, f.name));
+  const total = chosen.reduce((a, f) => a + f.size, 0);
+
+  clear(info);
+  const box = noteBox('', [{ node: el('span', 'spin') }, ` Uploading ${plural(chosen.length, 'file')}, ${bytes(total)}…`]);
+  box.classList.add('after-grid');
+  const bar = el('div', 'bar upload-bar');
+  const fill = el('i');
+  bar.appendChild(fill);
+  box.appendChild(bar);
+  info.appendChild(box);
+  $('inputUpload').disabled = true;
+
+  const fail = (message) => {
+    clear(info);
+    const n = noteBox('crit', [{ b: 'Upload failed. ' }, message]);
+    n.classList.add('after-grid');
+    info.appendChild(n);
+  };
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', `/api/upload?${q({ purpose: KIND_TEXT[kind][1] })}`);
+  xhr.setRequestHeader('X-Dashboard-Token', TOKEN);
+  xhr.upload.addEventListener('progress', (e) => {
+    if (e.lengthComputable) fill.style.width = `${(e.loaded / e.total) * 100}%`;
+  });
+  xhr.addEventListener('load', () => {
+    $('inputUpload').disabled = false;
+    let d;
+    try { d = JSON.parse(xhr.responseText); } catch (e) { d = { ok: false, error: `${xhr.status} ${xhr.statusText}` }; }
+    if (!d.ok) { fail(d.error || 'the server refused it'); return; }
+    toast(`Uploaded ${plural(d.files.length, 'file')} to ${d.folder}`);
+    if (state.kind === kind) setInput(d.path);
+  });
+  xhr.addEventListener('error', () => { $('inputUpload').disabled = false; fail('the connection dropped before it finished.'); });
+  xhr.send(fd);
+});
 $('inputPath').addEventListener('change', (e) => { if (e.target.value.trim() && e.target.value.trim() !== state.inputPath) setInput(e.target.value); });
 $('segCaller').addEventListener('change', refresh);
 
@@ -1280,6 +1440,9 @@ $('stopBtn').addEventListener('click', async () => {
 async function openResults(path) {
   path = String(path || '').trim();
   if (!path) return;
+  // Reading a big folder takes a moment; someone who moved on to another tab
+  // meanwhile is not pulled back to Results when it arrives.
+  const from = state.view;
   let r;
   try { r = await get(`/api/results?${q({ path })}`); } catch (e) { toast(e.message); return; }
   state.results = r;
@@ -1293,8 +1456,44 @@ async function openResults(path) {
   renderDashboard(r);
   renderPlots(r);
   renderFiles(r);
-  show('results');
+  refreshArchive(r);
+  if (state.view === from || state.view === 'results') show('results');
+  else toast(`Opened ${baseName(r.output_dir)} in Results.`);
 }
+
+/* The whole folder as one .zip. The server builds it before sending a byte,
+   so the wait is up front and the browser then gets a real size. */
+async function refreshArchive(r) {
+  const label = $('archiveSize'), btn = $('archiveBtn');
+  $('archivePath').textContent = r.output_dir;
+  $('archivePath').title = r.output_dir;
+  label.textContent = '';
+  btn.disabled = true;
+  try {
+    const d = await get(`/api/results/archive/plan?${q({ path: r.output_dir })}`);
+    if (state.resultsPath !== r.output_dir) return;
+    label.textContent = `${plural(d.files, 'file')} · ${bytes(d.bytes)}`;
+    btn.disabled = !d.files;
+  } catch (e) { label.textContent = e.message; }
+}
+$('archiveBtn').addEventListener('click', async () => {
+  const folder = state.resultsPath;
+  if (!folder) return;
+  const btn = $('archiveBtn');
+  btn.disabled = true;
+  const url = `/api/results/archive?${q({ path: folder })}`;
+  try {
+    // A refusal (a run still writing here, say) shows as a message, not a download.
+    const head = await fetch(url, { method: 'HEAD' });
+    if (!head.ok) {
+      const d = await (await fetch(url)).json().catch(() => ({}));
+      toast(d.error || `Could not build the .zip (${head.status})`);
+      return;
+    }
+    window.location.href = url;
+    toast(`Packing ${baseName(folder)}.zip; the download starts when it is ready.`);
+  } catch (e) { toast(e.message); } finally { btn.disabled = false; }
+});
 
 function renderResultNotes(r) {
   const box = $('resNotes');

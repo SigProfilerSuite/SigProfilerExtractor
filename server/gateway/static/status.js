@@ -1,12 +1,11 @@
 'use strict';
 
-// What this SLURM job was given and how much of it is in use. Two places use
-// it: the Workbench page (#spe-gw, a pill that opens a panel) and the upload
-// page (#job-card, the same details as a card).
+// What this SLURM job was given and how much of it is in use, on the
+// Workbench page: its "ready" pill opens a panel of the details.
 (() => {
-  // Live while someone is looking (the panel open, or the upload page's
-  // card); otherwise just often enough to keep the pill current. The server
-  // samples every 2 s whatever this does, so the trends are always there.
+  // Live while the panel is open; otherwise just often enough to keep the
+  // pill current. The server samples every 2 s whatever this does, so the
+  // trends are always there.
   const POLL_FAST_MS = 3000;
   const POLL_SLOW_MS = 15000;
   const SVG = 'http://www.w3.org/2000/svg';
@@ -218,8 +217,8 @@
   // On the Workbench page, the top bar's "ready" pill (#envPill, which the
   // Workbench sets to "ready" or "ready · GPU" once it has loaded) gains this
   // job's CPU and GPU counts and opens the details panel just below it. If a
-  // Workbench version drops that pill, a pill of our own beside Upload &
-  // download does the same.
+  // Workbench version drops that pill, a pill of our own at the bottom right
+  // does the same.
   const widget = document.getElementById('spe-gw');
   const envPill = document.getElementById('envPill');
   let trigger = null, panel = null, latest = null, written = null;
@@ -288,7 +287,6 @@
       if (!panel.hidden && !panel.contains(e.target) && !trigger.contains(e.target)) setOpen(false);
     });
   }
-  const card = document.getElementById('job-card');
 
   async function load() {
     let r;
@@ -297,7 +295,6 @@
       r = await response.json();
       if (!r.ok) throw new Error(r.error || `HTTP ${response.status}`);
     } catch (err) {
-      if (card) card.replaceChildren(el('p', 'spe-note', `Could not read the job’s resources: ${err.message}`));
       return;
     }
     latest = r;
@@ -306,7 +303,6 @@
       if (trigger === envPill) labelEnvPill(); else trigger.textContent = summary(r);
       panel.replaceChildren(el('h2', 'spe-title', r.job_id ? 'This job' : 'This server'), ...details(r));
     }
-    if (card) card.replaceChildren(...details(r));
   }
 
   // Reads now, then again after the fast or slow delay; opening the panel
@@ -316,7 +312,7 @@
     clearTimeout(timer);
     load().finally(() => {
       clearTimeout(timer);
-      const watching = card || (panel && !panel.hidden);
+      const watching = panel && !panel.hidden;
       timer = setTimeout(refresh, watching ? POLL_FAST_MS : POLL_SLOW_MS);
     });
   }

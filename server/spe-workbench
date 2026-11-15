@@ -284,7 +284,7 @@ install() {
 app_cmd() {
     install
     local envs=(
-        SPE_PORT="${PORT}" SPE_PORT_TRIES=100 SPE_DATA="${DATA}"
+        SPE_PORT="${PORT}" SPE_PORT_TRIES=100 SPE_DATA="${DATA}" SPE_HOME="${HOME}"
         SPE_HOST_NAME="${HOST_FQDN}" SPE_SSH_USER="${USER}"
         PATH="${VENV}/bin:${PATH}" VIRTUAL_ENV="${VENV}" PYTHONUNBUFFERED=1)
     # The app sees all the server's CPUs; this caps its runs (Python 3.13).

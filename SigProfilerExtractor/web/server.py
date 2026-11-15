@@ -12,6 +12,10 @@ login. Instead (the same model as SigProfilerMatrixGenerator's web app):
   into the page this server serves. Another site, or another local server on
   a different port, can send the request but cannot read the page, so cannot
   supply the token.
+* Files: the page picks paths with the operating system's own picker, or,
+  where none can open (a server), with its own picker drawn from /api/browse.
+  It can upload inputs (POST /api/upload, streamed to disk) and download a
+  whole results folder as one .zip (/api/results/archive). See files.py.
 * SigProfilerExtractor's own results dashboard (reports.html) runs inline
   scripts, so it is served on its own route with its own policy: sandboxed,
   without access to this origin, unable to fetch anything or call this API.
@@ -25,14 +29,16 @@ import json
 import mimetypes
 import os
 import secrets
+import shutil
 import sys
 import threading
 import traceback
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
-from . import genomes, inputs, jobs, native_dialog, params, progress, results
+from . import files, genomes, inputs, jobs, native_dialog, params, progress, results
 
 STATIC = Path(__file__).resolve().parent / "static"
 ALLOWED_HOSTS = {"localhost", "127.0.0.1", "::1"}
@@ -63,12 +69,17 @@ PICKERS = {
     "seeds": ("file", "Choose a Seeds.txt file"),
     "volume": ("folder", "Choose the reference files folder"),
 }
+# What each input picker's Upload button may send: a folder's worth of files,
+# or exactly one file.
+UPLOADS = {"input_vcf": "folder", "input_matrix": "file",
+           "input_bedpe": "folder", "input_seg": "file"}
 
 _CLIENT_ERRORS = (
     inputs.InputError,
     results.ResultsError,
     native_dialog.DialogError,
     jobs.JobError,
+    files.FilesError,
 )
 
 
@@ -140,7 +151,8 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             return {}
 
-    def _file(self, path: Path, download: bool = False, policy: str | None = CONTENT_SECURITY_POLICY):
+    def _file(self, path: Path, download: bool = False, policy: str | None = CONTENT_SECURITY_POLICY,
+              filename: str | None = None):
         if not path.is_file():
             return self._fail(f"not found: {path.name}", 404)
         ctype = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
@@ -152,7 +164,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Cache-Control", "no-store, must-revalidate")
         if download:
-            self.send_header("Content-Disposition", f'attachment; filename="{path.name}"')
+            self.send_header("Content-Disposition", f'attachment; filename="{filename or path.name}"')
         self.end_headers()
         if self.command == "HEAD":
             return
@@ -210,7 +222,14 @@ class Handler(BaseHTTPRequestHandler):
                 "cuda": _cuda_available(),
                 "cpus": os.cpu_count() or 1,
                 "results_root": str(Path.home() / "SigProfilerExtractor_results"),
+                # "native": the operating system's picker; "page": the page's own
+                "picker": srv.picker,
+                "pickers": {k: {"kind": v[0], "title": v[1]} for k, v in PICKERS.items()},
+                "places": srv.places(),
+                "uploads_root": str(srv.uploads),
             })
+        if path == "/api/browse":
+            return self._json({"ok": True, **files.browse(_one(query, "path") or srv.browse_start())})
         if path == "/api/genomes":
             volume = _one(query, "volume") or srv.volume
             return self._json({"ok": True, **genomes.status(volume)})
@@ -255,6 +274,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._file(target, policy=DASHBOARD_POLICY)
         if path == "/api/results/download":
             return self._file(Path(_one(query, "path")), download=True)
+        if path == "/api/results/archive/plan":
+            folder = _results_folder(_one(query, "path"))
+            return self._json({"ok": True, **files.archive_plan(folder)})
+        if path == "/api/results/archive":
+            return self._archive(_one(query, "path"))
         if path == "/api/results/view":
             # Shown in the browser rather than downloaded, so PDFs only: any
             # other file served inline from this origin could run as this app.
@@ -286,6 +310,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _post(self, path: str):
         srv = self.server
+        if path == "/api/upload":  # multipart, so before the JSON body is read
+            return self._upload(parse_qs(urlparse(self.path).query))
         body = self._body()
 
         if path == "/api/run":
@@ -331,6 +357,8 @@ class Handler(BaseHTTPRequestHandler):
             picker = PICKERS.get(body.get("purpose"))
             if picker is None:
                 return self._fail(f"purpose must be one of {sorted(PICKERS)}", 400)
+            if srv.picker != "native":
+                return self._fail("no file picker can open here; the page draws its own", 400)
             kind, title = picker
             return self._json({"ok": True, "path": native_dialog.choose(kind, title)})
         if path == "/api/shutdown":
@@ -344,6 +372,63 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         return self._fail("not found", 404)
+
+    def _upload(self, query: dict):
+        """Files for one input, into a new folder under the uploads folder.
+
+        Answers with the path to use: the folder for a folder input, the file
+        for a one-file input (where more than one file is refused).
+        """
+        # A refusal can leave the rest of the body unread, which would be taken
+        # for the next request on this connection; one upload per connection.
+        self.close_connection = True
+        purpose = _one(query, "purpose")
+        shape = UPLOADS.get(purpose)
+        if shape is None:
+            return self._fail(f"purpose must be one of {sorted(UPLOADS)}", 400)
+        ctype = self.headers.get("Content-Type", "")
+        if "multipart/form-data" not in ctype:
+            return self._fail("expected a multipart upload", 400)
+        length = int(self.headers.get("Content-Length") or 0)
+        if length <= 0:
+            return self._fail("empty upload", 400)
+        folder = files.new_upload_folder(self.server.uploads, purpose.replace("input_", ""))
+        try:
+            written = files.parse_upload(self.rfile, ctype, length, folder)
+            if not written:
+                raise files.FilesError("no files in the upload")
+            if shape == "file" and len(written) > 1:
+                raise files.FilesError("this input is one file; upload just that file")
+        except BaseException:
+            shutil.rmtree(folder, ignore_errors=True)
+            raise
+        target = written[0]["path"] if shape == "file" else str(folder)
+        return self._json({"ok": True, "path": target, "folder": str(folder),
+                           "files": [{"name": f["name"], "bytes": f["bytes"]} for f in written]})
+
+    def _archive(self, raw: str):
+        """A results folder as one .zip, built first so it has a real size.
+
+        HEAD only checks: the page asks first, so a refusal shows as a
+        message rather than as a download of an error.
+        """
+        srv = self.server
+        folder = _results_folder(raw)
+        busy = [j for j in _runs_writing_to(srv, str(folder)) if j.get("status") == "running"]
+        if busy:
+            return self._fail("A run is writing to this folder right now, so the .zip would be "
+                              "incomplete. Wait for it to finish, or stop it.", 409)
+        if self.command == "HEAD":
+            return self._send(200, b"", "application/zip")
+        tmp = srv.scratch / f"{os.getpid()}-{uuid.uuid4().hex}.zip"
+        try:
+            files.archive_write(folder, tmp)
+            self._file(tmp, download=True, policy=None, filename=f"{folder.name}.zip")
+        finally:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
 
     def _start_run(self, settings: dict):
         srv = self.server
@@ -424,6 +509,16 @@ def _progress(srv, job: dict) -> dict | None:
     return progress.parse(text, job)
 
 
+def _results_folder(raw: str) -> Path:
+    """A folder of SigProfilerExtractor results, or ResultsError: only those
+    are offered whole, so the .zip route cannot pack up any folder at all."""
+    folder = Path(str(raw or "")).expanduser()
+    if not raw or not results.earlier_results(str(folder))["found"]:
+        raise results.ResultsError("only a folder of SigProfilerExtractor results can be "
+                                   "downloaded as a .zip")
+    return folder.resolve()
+
+
 def _same_folder(a: str, b: str) -> bool:
     try:
         return Path(a).expanduser().resolve() == Path(b).expanduser().resolve()
@@ -479,6 +574,32 @@ class Server(ThreadingHTTPServer):
         self.volume = volume
         self.manager = jobs.JobManager(jobs_dir)
         self.instance_token = secrets.token_hex(16)
+        state = Path(jobs_dir).parent
+        # Uploads and the .zip being built; a server deployment points
+        # uploads somewhere visible (server/gateway/spe_gateway.py).
+        self.uploads = state / "uploads"
+        self.scratch = state / "tmp"
+        # "native" opens the operating system's picker. A server, where none
+        # can open, sets "page": the page draws its own from /api/browse.
+        self.picker = "native"
+        self.home = Path.home()
+        self.extra_places: list[tuple[str, Path]] = []
+
+    def browse_start(self) -> str:
+        """Where the page's own picker opens when it has nowhere in mind."""
+        return str(self.home)
+
+    def places(self) -> list[dict]:
+        """Shortcuts the page's picker offers: home, results, uploads."""
+        found, seen = [], set()
+        for name, path in [("Home", self.home),
+                           ("Results", Path.home() / "SigProfilerExtractor_results"),
+                           *self.extra_places, ("Uploads", self.uploads)]:
+            path = Path(path)
+            if path.is_dir() and str(path) not in seen:
+                seen.add(str(path))
+                found.append({"name": name, "path": str(path)})
+        return found
 
 
 def make_server(host: str, port: int, jobs_dir: str | Path, volume: str | None = None,

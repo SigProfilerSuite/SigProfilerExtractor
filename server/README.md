@@ -118,13 +118,28 @@ Print the link and the tunnel command again any time with `./spe-workbench url`.
 
 The Workbench is the same as on your own computer, with these differences:
 
-- **Inputs**: click **Upload & download** (bottom right) to upload files or a
-  folder from your computer; it shows the path to paste into the Input card.
-  Files already on the server can be pasted by their path as they are. The
-  **Browse** buttons cannot open a file picker on a server.
+- **Choosing files on the server**: the **Choose** and **Browse** buttons open
+  the Workbench's own file browser, which shows the server's folders (a
+  window from your computer's system cannot show them). It starts in your
+  home folder; the buttons along its top jump to **Home**, **Results**, the
+  **Data folder** and **Uploads**. Open folders by clicking them, click
+  **.. up one level** to go up, then click a file, or **Use this folder** for
+  a folder. Folders holding results are marked *results*, and inputs are
+  marked *calls*, *matrix* or *bedpe*. You can also paste a path on the
+  server.
+- **Inputs on your computer**: click **Upload** beside **Choose** in the Input
+  card. For variant calls or BEDPE files, select all the files at once (they
+  go into one folder); for a matrix or a segmentation file, select the one
+  file. A bar shows the progress; the files land in a new folder in the data
+  folder's `uploads/` (named like `vcf_20261114-153012`), and the Workbench
+  then uses them as the input. Up to 8 GB per upload. For larger inputs,
+  copy them to the server with `scp` or `rsync` and choose them there.
 - **Results** are saved on the server, in the data folder's
   `SigProfilerExtractor_results/` unless you choose another output folder.
-  **Upload & download** offers any run's output folder as one .zip.
+  Open a run's results and click **Download all as .zip** at the top: the
+  server packs the folder first (it shows how many files and how much), then
+  your browser downloads it. Single files have their own **Download**
+  buttons.
 - **GPU**: tick *Use the GPU* in a run's Advanced settings.
 
 Closing the browser stops nothing: runs keep going, and the same link finds
@@ -355,15 +370,17 @@ instead of opening the port.
 
 ## How it works
 
-`gateway/spe_gateway.py` imports the Workbench's own server and handler; no
-upstream file is changed. The Workbench answers only `127.0.0.1` and has no
-login. The gateway listens on the server, admits only requests that carry the
-token, then passes them to the Workbench as if they came from the server
-itself, so its own checks still run. It adds:
+`gateway/spe_gateway.py` imports the Workbench's own server and handler. The
+Workbench answers only `127.0.0.1` and has no login. The gateway listens on
+the server, admits only requests that carry the token, then passes them to
+the Workbench as if they came from the server itself, so its own checks still
+run. It adds:
 
-- **Upload & download** (bottom-right button, or `/gateway/`): upload files or
-  a folder and copy the path to paste; download any run's output folder as one
-  .zip.
+- **Files**: it tells the Workbench to draw its own file browser (no window
+  from the server's system can reach your screen), to put uploads in the data
+  folder's `uploads/`, and to start browsing in your home folder. The browser,
+  upload and .zip download are the Workbench's own
+  (`SigProfilerExtractor/web/files.py`), so they work the same everywhere.
 - **The ready pill** in the top bar shows the CPUs and GPUs and live use
   (`ready · 32 CPUs · 1 GPU (63% busy, 14/80 GB)`). Click it for graphs of CPU
   load, memory, and each GPU's load and memory over the last 10 minutes. In a
@@ -373,8 +390,8 @@ itself, so its own checks still run. It adds:
 | Path in `server/` | What |
 |---|---|
 | `spe-workbench` | The launcher |
-| `gateway/spe_gateway.py` | Token sign-in, free-port choice, upload, .zip download, resources |
-| `gateway/static/` | Its pages, script and styles |
+| `gateway/spe_gateway.py` | Token sign-in, free-port choice, file settings, resources |
+| `gateway/static/` | The sign-in page's styles, and the resources panel's script and styles |
 | `gateway/entrypoint.sh` | Start-up script the launcher runs, and its settings |
 
 In the data folder, `.workbench/` holds the install, the token, the link, the

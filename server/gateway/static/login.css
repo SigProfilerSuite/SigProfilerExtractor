@@ -1,0 +1,26 @@
+:root {
+  /* The Workbench's own font stack (its --ui), so the sign-in page matches. */
+  --ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --bg: #f6f5f8; --text: #1d1a22; --muted: #5f5868; --line: #e1dde6;
+  --accent: #46166b; --accent-text: #ffffff; --bad: #b3261e;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #17151b; --text: #ece9f0; --muted: #a8a1b2; --line: #36313d;
+    --accent: #b48ee0; --accent-text: #17151b; --bad: #f2867d;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 var(--ui); }
+h1 { font-size: 22px; margin: 0; }
+main { max-width: 420px; margin: 0 auto; padding: 12vh 16px 48px; }
+form { display: flex; flex-direction: column; gap: 10px; }
+input[type=password] { display: block; width: 100%; padding: 8px 10px; border: 1px solid var(--line);
+  border-radius: 6px; background: var(--bg); color: var(--text);
+  font: 14px ui-monospace, SFMono-Regular, Menlo, monospace; }
+button { padding: 8px 14px; border: 0; border-radius: 6px; background: var(--accent);
+  color: var(--accent-text); font: 600 14px var(--ui); cursor: pointer; }
+.bad { color: var(--bad); }
+code { font-size: 13px; }

@@ -12,10 +12,14 @@ laptop, so this wrapper runs the very same server and handler, but:
 * after that check, rewrites Host (and a same-origin Origin) to the loopback
   address, so the Workbench's own Host/Origin/token checks still run unchanged
   and still refuse cross-site actions;
-* adds what a remote browser needs and a local one does not: uploading files
-  to the server, and downloading a whole results folder as one .zip
-  (/gateway/). The native file picker cannot open on a headless node, so it
-  is answered with a pointer to that page instead.
+* tells the Workbench to draw its own file picker from the server's folders
+  (no native picker can open on a headless node), to put uploads in the data
+  folder's uploads/, and to offer the user's home and the data folder as
+  places to start from. Upload and the .zip download of results are the
+  Workbench's own (SigProfilerExtractor/web/files.py);
+* reports the CPUs, memory and GPUs the job has, with recent trends, in a
+  panel under the top bar's "ready" pill (static/status.js), and holds runs
+  to those CPUs.
 
 Run it with the Workbench's own interpreter (it imports the installed
 package); the launcher, ../spe-workbench, does that. The token comes from the
@@ -40,7 +44,6 @@ import subprocess
 import sys
 import threading
 import time
-import zipfile
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 
@@ -50,21 +53,13 @@ from SigProfilerExtractor.web.launcher import _state_dir
 
 HERE = Path(__file__).resolve().parent
 STATIC = HERE / "static"
-SAFE_NAME = re.compile(r"^[A-Za-z0-9._-]{1,100}$")
-# Added to the Workbench's page: the job-resources pill (filled by status.js)
-# and the link to the upload/download page, fixed at the bottom right.
-LAUNCHER_LINK = (
+# Added to the Workbench's page: the job-resources panel (status.js).
+ADDON = (
     '<link rel="stylesheet" href="/gateway/status.css">'
-    '<div id="spe-gw"><a class="spe-gw-files" href="/gateway/" target="_blank" rel="noopener" '
-    'title="Upload inputs to the server, download results as .zip">Upload &amp; download</a></div>'
+    '<div id="spe-gw"></div>'
     '<script src="/gateway/status.js" defer></script>'
 )
-GATEWAY_FILES = ("files.js", "files.css", "status.js", "status.css")
-NO_PICKER = (
-    "There is no file browser on the server. Paste a path on the server instead, or "
-    "upload your files first with Upload & download (bottom right), which shows the "
-    "path to paste."
-)
+GATEWAY_FILES = ("login.css", "status.js", "status.css")
 
 
 class GatewayHandler(workbench.Handler):
@@ -172,26 +167,14 @@ class GatewayHandler(workbench.Handler):
     def do_POST(self):
         if not self._gate():
             return
-        if unquote(urlparse(self.path).path) == "/api/dialog":
-            return self._fail(NO_PICKER, 400)
         self._as_local()
         return super().do_POST()
-
-    def do_PUT(self):
-        if not self._gate():
-            return
-        if not self._same_origin():
-            return self._fail("uploads must come from this app's own page", 403)
-        path = unquote(urlparse(self.path).path)
-        if path != "/gateway/api/upload":
-            return self._fail("not found", 404)
-        return self._guard(self._upload, parse_qs(urlparse(self.path).query))
 
     def _get(self, path: str, query: dict):
         if path in ("/", "/index.html"):
             page = (workbench.STATIC / "index.html").read_text(encoding="utf-8")
             page = page.replace(workbench.TOKEN_PLACEHOLDER, self.server.instance_token)
-            page = page.replace("</body>", LAUNCHER_LINK + "</body>", 1)
+            page = page.replace("</body>", ADDON + "</body>", 1)
             return self._send(200, page, "text/html; charset=utf-8",
                               {"Cache-Control": "no-store, must-revalidate"})
         return super()._get(path, query)
@@ -227,65 +210,11 @@ class GatewayHandler(workbench.Handler):
     # ------------------------------------------------------------ gateway routes
 
     def _gateway_get(self, path: str, query: dict):
-        if path in ("/gateway", "/gateway/"):
-            return self._file(STATIC / "files.html")
         if path.startswith("/gateway/") and path[len("/gateway/"):] in GATEWAY_FILES:
             return self._file(STATIC / path[len("/gateway/"):])
         if path == "/gateway/api/resources":
             return self._json({"ok": True, **self.server.resources.snapshot()})
-        if path == "/gateway/api/list":
-            return self._json({"ok": True, "uploads_root": str(self.server.uploads),
-                               "uploads": _folders(self.server.uploads),
-                               "runs": _runs(self.server)})
-        if path == "/gateway/api/zip":
-            return self._zip(Path((query.get("path") or [""])[0]).expanduser())
         return self._fail("not found", 404)
-
-    def _upload(self, query: dict):
-        folder = (query.get("folder") or [""])[0]
-        relative = (query.get("path") or [""])[0]
-        if not SAFE_NAME.match(folder) or folder in (".", ".."):
-            raise ValueError("folder names may use letters, digits, '.', '_' and '-' only")
-        parts = relative.replace("\\", "/").split("/")
-        if not relative or any(p in ("", ".", "..") or "\0" in p for p in parts):
-            raise ValueError(f"bad file name: {relative!r}")
-        length = self.headers.get("Content-Length")
-        if length is None:
-            raise ValueError("Content-Length is required")
-        remaining = int(length)
-        target = self.server.uploads / folder / Path(*parts)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        partial = target.with_name(target.name + ".uploading")
-        with open(partial, "wb") as out:
-            while remaining:
-                chunk = self.rfile.read(min(remaining, 1 << 20))
-                if not chunk:
-                    raise ConnectionError("upload interrupted")
-                out.write(chunk)
-                remaining -= len(chunk)
-        os.replace(partial, target)
-        return self._json({"ok": True, "path": str(target),
-                           "folder": str(self.server.uploads / folder)})
-
-    def _zip(self, root: Path):
-        if not root.is_dir():
-            raise ValueError(f"not a folder: {root}")
-        root = root.resolve()
-        name = root.name or "files"
-        self.send_response(200)
-        self.send_header("Content-Type", "application/zip")
-        self.send_header("Content-Disposition", f'attachment; filename="{name}.zip"')
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("Connection", "close")
-        self.end_headers()
-        self.close_connection = True
-        # Streamed as it is built (zipfile handles an unseekable output), so a
-        # large results folder starts downloading at once and is never staged.
-        with zipfile.ZipFile(self.wfile, "w", zipfile.ZIP_DEFLATED,
-                             compresslevel=1, allowZip64=True) as archive:
-            for item in sorted(root.rglob("*")):
-                if item.is_file() and not item.name.endswith(".uploading"):
-                    archive.write(item, f"{name}/{item.relative_to(root)}")
 
 
 # ------------------------------------------------------------------ resources
@@ -566,46 +495,14 @@ def _node_usage(node: str) -> dict | None:
 
 # ------------------------------------------------------------------ helpers
 
-def _folders(base: Path) -> list[dict]:
-    found = []
-    for folder in sorted(base.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
-        if not folder.is_dir():
-            continue
-        files = [f for f in folder.rglob("*") if f.is_file()]
-        found.append({
-            "name": folder.name,
-            "path": str(folder),
-            "files": len(files),
-            "bytes": sum(f.stat().st_size for f in files),
-            "single_file": str(files[0]) if len(files) == 1 else None,
-            "modified": folder.stat().st_mtime,
-        })
-    return found
-
-
-def _runs(server) -> list[dict]:
-    runs = []
-    for job in server.manager.listing(include_hidden=True):
-        if job.get("kind") != "run" or not job.get("output_dir"):
-            continue
-        runs.append({
-            "name": job.get("name"),
-            "status": job.get("status"),
-            "output_dir": job["output_dir"],
-            "exists": Path(job["output_dir"]).is_dir(),
-            "created_at": job.get("created_at"),
-        })
-    return runs
-
-
 def _login_page(target: str, wrong: bool = False) -> str:
     note = '<p class="bad">That token is not right.</p>' if wrong else ""
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Workbench sign-in</title>
-<link rel="stylesheet" href="/gateway/files.css"></head>
-<body class="login"><main>
+<link rel="stylesheet" href="/gateway/login.css"></head>
+<body><main>
 <h1>SigProfilerExtractor Workbench</h1>
 <p>Paste the token from <code>workbench_endpoint.env</code> or the job log.</p>
 {note}
@@ -712,8 +609,17 @@ def main(argv: list[str] | None = None) -> int:
     srv.RequestHandlerClass = GatewayHandler
     srv.gateway_token = token
     srv.resources = Resources()
+    # Files: the page's own picker (no native one can open here), uploads into
+    # the data folder, and the user's real home (HOME is the data folder here,
+    # see entrypoint.sh) and the data folder as places to start from.
+    srv.picker = "page"
     srv.uploads = Path(args.uploads).resolve()
     srv.uploads.mkdir(parents=True, exist_ok=True)
+    home = Path(os.environ.get("SPE_HOME") or Path.home())
+    if home.is_dir():
+        srv.home = home
+    if os.environ.get("SPE_DATA"):
+        srv.extra_places = [("Data folder", Path(os.environ["SPE_DATA"]))]
     short = socket.gethostname().split(".")[0]
     srv.public_hosts = None if "*" in args.public_host else {h.lower() for h in (
         "localhost", "127.0.0.1", "::1", short, socket.gethostname(), socket.getfqdn(),
