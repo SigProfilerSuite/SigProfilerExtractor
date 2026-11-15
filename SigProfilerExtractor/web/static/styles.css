@@ -573,6 +573,26 @@ dialog .msg { padding:4px 18px 16px; font-size:13.5px; line-height:1.55; color:v
 dialog .ft { display:flex; gap:9px; justify-content:flex-end; padding:12px 18px;
   border-top:1px solid var(--line); background:var(--surface-2);
   border-radius:0 0 var(--radius) var(--radius); }
+/* The page's own file picker, for a server where the operating system's cannot open. */
+dialog.picker { width:min(640px,94vw); }
+.picker .places { display:flex; gap:6px; flex-wrap:wrap; padding:2px 18px 8px; }
+.picker .path { font-family:var(--mono); font-size:12px; color:var(--ink-2); padding:8px 18px;
+  border-top:1px solid var(--line); border-bottom:1px solid var(--line); background:var(--surface-2);
+  overflow-wrap:anywhere; }
+.picker .entries { max-height:46vh; max-height:46dvh; overflow:auto; }
+.picker .e { display:flex; align-items:center; gap:10px; width:100%; padding:7px 18px; border:0;
+  border-bottom:1px solid var(--line); background:none; color:var(--ink); text-align:left;
+  font:inherit; cursor:pointer; }
+.picker .e:hover { background:var(--surface-2); }
+.picker .e:disabled { cursor:default; color:var(--muted); background:none; }
+.picker .e .n { flex:1; min-width:0; font-family:var(--mono); font-size:12px; overflow-wrap:anywhere; }
+.picker .e .s { color:var(--muted); font-size:12px; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.picker .empty { padding:14px 18px; color:var(--muted); font-size:13px; margin:0; }
+.picker .ft { align-items:center; }
+.picker .ft .muted { flex:1; font-size:12px; }
+#archiveCard > .hd { border-bottom:0; border-radius:var(--radius); }
+#archiveCard > .hd #archiveSize { flex:0 0 auto; }
+.upload-bar { margin-top:8px; }
 .stopped { max-width:560px; margin:16vh auto 0; padding:0 16px; color:var(--ink-2); line-height:1.6; }
 .stopped h2 { color:var(--ink); font-size:22px; margin:0 0 8px; }
 

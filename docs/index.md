@@ -6,7 +6,8 @@ SigProfilerExtractor is a [python][1] framework that allows de novo extraction o
     The [SigProfilerExtractor Workbench](7. Web App.md) runs the tool from your browser.
     Double-click to install and start it on macOS or Windows, set up a run with clear
     presets, follow its progress, and explore the results in an interactive dashboard.
-    A double-click uninstalls it too.
+    A double-click uninstalls it too. It also runs
+    [on a server or cluster](8. Workbench on a Server.md), used from your own browser.
 
 ----------
 

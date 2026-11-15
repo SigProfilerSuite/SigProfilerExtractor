@@ -1,0 +1,615 @@
+#!/bin/bash
+#
+# spe-server -- run the SigProfilerExtractor Workbench on this server and
+# use it from the browser on your own computer.
+#
+#   ./spe-server start        start it and print the link (first time: installs it)
+#   ./spe-server url          print the link again
+#   ./spe-server status       is it running?
+#   ./spe-server logs         follow its log
+#   ./spe-server stop         stop it, and any run in progress
+#   ./spe-server update       reinstall from this clone and restart (git pull first)
+#   ./spe-server install      install only (start does it when needed)
+#   ./spe-server new-token    make a new link; the old one stops working
+#
+#   ./spe-server submit [options] [-- sbatch options]
+#                                run it as a SLURM job instead; url, status, logs
+#                                and stop then work on the job (stop cancels it)
+#   ./spe-server run          run it in the foreground (what the job runs)
+#
+# Options (none are needed; each is remembered for the next start or submit):
+#   --data DIR       uploads, results, genomes, run records and the install
+#                    (default: spe-data beside this clone)
+#   --port N         port to try first (default 8765); if it is taken, the
+#                    next free one (the link shows which)
+#   --cpus N         CPUs the runs may use (start: all; submit: 8)
+#   --no-gpu         hide the GPUs from the app (--gpu undoes it)
+#   --torch BUILD    PyTorch build: cu128 (NVIDIA GPU, driver 525 or newer;
+#                    also runs on CPUs) or cpu (6 GB smaller)  (default cu128)
+#   --gpus N         submit: GPUs the job asks for (default 0)
+#   --memory SIZE    submit: memory the job asks for (default 32G)
+#   --time T         submit: the job's time limit, e.g. 2-00:00:00
+#                    (default: the partition's)
+#   (--cpus all and --memory none undo an earlier choice)
+#
+# No admin rights, Docker or system Python needed: it downloads uv, which
+# installs Python 3.13, PyTorch and SigProfilerExtractor (this clone) in the
+# data folder, and runs the app as an ordinary process of yours.
+
+set -euo pipefail
+
+DATA="${SPE_DATA_DIR:-}"
+PORT=8765
+CPUS=""
+MEMORY=""
+GPU=1
+GPUS=""
+TORCH=cu128
+JOB_ID=""                # a SLURM job running the app (submit)
+VIA=""                   # the host it was submitted from, to tunnel through
+TIME=""
+SBATCH_ARGS=()
+UV_VERSION=0.13.6        # uv, when the server has none
+PYTHON_VERSION=3.13      # reads PYTHON_CPU_COUNT, which holds runs to --cpus
+MIN_FREE_GB=20           # for the default data folder: the install (~8 GB), a genome, results
+
+die() { echo "spe-server: $*" >&2; exit 1; }
+say() { echo "spe-server: $*"; }
+
+usage() { awk 'NR >= 3 && !/^#/ { exit } NR >= 3' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+
+SELF="$(readlink -f "${BASH_SOURCE[0]}")"
+SERVER_DIR="$(dirname "${SELF}")"       # server/ in the repository
+REPO_DIR="$(dirname "${SERVER_DIR}")"
+[[ -f "${REPO_DIR}/setup.py" && -d "${REPO_DIR}/SigProfilerExtractor/web" ]] \
+    || die "run this from a clone of the repository (SigProfilerExtractor/server/spe-server)"
+
+# ------------------------------------------------------------------ arguments
+
+COMMAND="${1:-}"
+[[ -n "${COMMAND}" ]] || usage 1
+shift
+DATA_GIVEN=0
+GIVEN=" "        # the options given this time; the others come from the last start
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --data)        DATA="$2"; DATA_GIVEN=1; shift 2 ;;
+        --port)        PORT="$2"; GIVEN+="PORT "; shift 2 ;;
+        --cpus)        CPUS="$2"; GIVEN+="CPUS "; shift 2 ;;
+        --memory)      MEMORY="$2"; GIVEN+="MEMORY "; shift 2 ;;
+        --gpus)        GPUS="$2"; GIVEN+="GPUS "; shift 2 ;;
+        --no-gpu)      GPU=0; GIVEN+="GPU "; shift ;;
+        --gpu)         GPU=1; GIVEN+="GPU "; shift ;;
+        --torch)       TORCH="$2"; GIVEN+="TORCH "; shift 2 ;;
+        --time)        TIME="$2"; GIVEN+="TIME "; shift 2 ;;
+        --)            shift; SBATCH_ARGS=("$@"); GIVEN+="SBATCH_ARGS "; break ;;
+        -h|--help)     usage 0 ;;
+        *)             die "unknown option: $1 (see --help)" ;;
+    esac
+done
+# "all" and "none" undo an earlier start's limits.
+[[ "${CPUS}" == all ]] && CPUS=""
+[[ "${MEMORY}" == none ]] && MEMORY=""
+[[ "${PORT}" =~ ^[0-9]+$ ]] || die "--port must be a number"
+[[ -z "${CPUS}" || "${CPUS}" =~ ^[0-9]+$ ]] || die "--cpus must be a whole number"
+[[ -z "${GPUS}" || "${GPUS}" =~ ^[0-9]+$ ]] || die "--gpus must be a whole number"
+[[ "${TORCH}" =~ ^(cpu|cu[0-9]+)$ ]] || die "--torch: cu128 or cpu (or another PyTorch build, e.g. cu126)"
+
+free_gb() { df -Pk "$1" 2>/dev/null | awk 'NR == 2 { print int($4 / 1048576) }'; }
+
+# The data folder: --data, else the one last given on this server, else
+# spe-data beside this clone. The install alone is about 8 GB, so a folder
+# without one must have room: 20 GB for the default, 10 for one you chose.
+REMEMBERED="${XDG_CONFIG_HOME:-${HOME}/.config}/spe-server/data-$(hostname -s)"
+# The launcher was called spe-workbench before; keep the folder it remembered.
+OLD_REMEMBERED="${XDG_CONFIG_HOME:-${HOME}/.config}/spe-workbench/data-$(hostname -s)"
+if [[ ! -s "${REMEMBERED}" && -s "${OLD_REMEMBERED}" ]]; then
+    mkdir -p "$(dirname "${REMEMBERED}")" && cp "${OLD_REMEMBERED}" "${REMEMBERED}"
+fi
+CHOSEN=1
+if [[ -z "${DATA}" && -s "${REMEMBERED}" ]]; then
+    DATA="$(<"${REMEMBERED}")"
+elif [[ -z "${DATA}" ]]; then
+    DATA="$(dirname "${REPO_DIR}")/spe-data"
+    CHOSEN=0
+fi
+if [[ ! -d "${DATA}/.workbench/install/venv" && "${COMMAND}" =~ ^(start|submit|install)$ ]]; then
+    disk="${DATA}"
+    while [[ ! -e "${disk}" && "${disk}" != / ]]; do disk="$(dirname "${disk}")"; done
+    free="$(free_gb "${disk}")"
+    need=$(( CHOSEN ? 10 : MIN_FREE_GB ))
+    (( ${free:-0} >= need )) || die "the data folder would be ${DATA}, but that disk has only ${free:-?} GB free;
+  the install (about 8 GB), reference genomes (3 GB each) and results need more.
+  Give a folder on a larger disk (remembered for next time):
+
+    $0 ${COMMAND} --data DIR"
+fi
+mkdir -p "${DATA}" 2>/dev/null || die "cannot create the data folder ${DATA}; give one you can write: $0 ${COMMAND} --data DIR"
+DATA="$(cd "${DATA}" && pwd -P)"
+if [[ "${DATA_GIVEN}" == 1 && "${COMMAND}" =~ ^(start|submit|install)$ ]]; then
+    mkdir -p "$(dirname "${REMEMBERED}")" && printf '%s\n' "${DATA}" > "${REMEMBERED}"
+fi
+STATE="${DATA}/.workbench"
+mkdir -p "${STATE}"
+SETTINGS="${STATE}/launch.env"
+INST="${STATE}/install"          # uv, Python, the environment
+VENV="${INST}/venv"
+
+HOST_FQDN="$(hostname -f 2>/dev/null || hostname)"
+
+# ------------------------------------------------------------------ helpers
+
+port_open() { (exec 3<>"/dev/tcp/${2:-127.0.0.1}/$1") 2>/dev/null; }
+
+# The host and port the app opened, from its link.
+url_host() { local u; u="$(<"${STATE}/url")"; u="${u#http://}"; u="${u%%/*}"; printf '%s' "${u%:*}"; }
+url_port() { local u; u="$(<"${STATE}/url")"; u="${u#http://}"; u="${u%%/*}"; printf '%s' "${u##*:}"; }
+
+# The SLURM job's state (RUNNING, PENDING, ...), or nothing once it has ended.
+job_state() { [[ -n "${JOB_ID}" ]] && squeue -h -j "${JOB_ID}" -o %T 2>/dev/null | head -n 1; }
+
+# A start on another server sharing this data folder (a lab share) cannot be
+# checked by its process ID from here, only by its link answering.
+is_running() {
+    if [[ -n "${JOB_ID}" ]]; then
+        [[ "$(job_state)" =~ ^(RUNNING|PENDING|CONFIGURING|COMPLETING|REQUEUED|RESIZING|SUSPENDED)$ ]]
+        return
+    fi
+    [[ -s "${STATE}/server.pid" ]] || return 1
+    local pid host
+    read -r pid host < "${STATE}/server.pid"
+    if [[ -z "${host}" || "${host}" == "${HOST_FQDN}" ]]; then
+        kill -0 "${pid}" 2>/dev/null
+    else
+        [[ -s "${STATE}/url" ]] && port_open "$(url_port)" "$(url_host)"
+    fi
+}
+
+running_elsewhere() {
+    local pid host
+    [[ -s "${STATE}/server.pid" ]] && read -r pid host < "${STATE}/server.pid"
+    [[ -n "${host:-}" && "${host}" != "${HOST_FQDN}" ]] && printf '%s' "${host}"
+}
+
+save_settings() {
+    cat > "${SETTINGS}" <<EOF
+PORT=${PORT}
+CPUS=${CPUS}
+MEMORY=${MEMORY}
+GPU=${GPU}
+GPUS=${GPUS}
+TORCH=${TORCH}
+TIME=${TIME}
+SBATCH_ARGS=($(for a in ${SBATCH_ARGS[@]+"${SBATCH_ARGS[@]}"}; do printf '%q ' "${a}"; done))
+JOB_ID=${JOB_ID}
+VIA=${VIA}
+EOF
+}
+
+# The last start's settings, for stop/status/url/logs.
+load_settings() {
+    # Settings written by the container launcher before name an ENGINE; they
+    # are not this launcher's to stop or report.
+    if [[ -s "${SETTINGS}" ]] && ! grep -q '^ENGINE=' "${SETTINGS}"; then
+        # shellcheck disable=SC1090
+        source "${SETTINGS}"
+    fi
+    return 0
+}
+
+# The last start's settings, for every option not given this time, so the
+# link (its port) and the limits stay as they were.
+reuse_settings() {
+    [[ -s "${SETTINGS}" ]] && ! grep -q '^ENGINE=' "${SETTINGS}" || return 0
+    local var
+    for var in PORT CPUS MEMORY GPU GPUS TORCH TIME JOB_ID VIA; do
+        [[ "${GIVEN}" == *" ${var} "* ]] && continue
+        printf -v "${var}" '%s' "$(source "${SETTINGS}"; printf '%s' "${!var:-}")"
+    done
+    [[ -n "${PORT}" ]] || PORT=8765
+    [[ -n "${GPU}" ]] || GPU=1
+    [[ -n "${TORCH}" ]] || TORCH=cu128
+    if [[ "${GIVEN}" != *" SBATCH_ARGS "* ]]; then
+        eval "SBATCH_ARGS=($(source "${SETTINGS}"; for a in ${SBATCH_ARGS[@]+"${SBATCH_ARGS[@]}"}; do printf '%q ' "${a}"; done))"
+    fi
+}
+
+# ------------------------------------------------------------------ install
+
+# uv (the server's, or downloaded) installs Python, PyTorch and this clone of
+# SigProfilerExtractor in the data folder: nothing in your home folder,
+# nothing that needs admin rights.
+
+fetch() {
+    if command -v curl >/dev/null 2>&1; then curl -fsSL --retry 3 -o "$2" "$1"
+    elif command -v wget >/dev/null 2>&1; then wget -q -O "$2" "$1"
+    else die "downloading needs curl or wget"
+    fi
+}
+
+sha256() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1; }
+
+get_uv() {
+    if command -v uv >/dev/null 2>&1; then UV="$(command -v uv)"; return; fi
+    UV="${INST}/bin/uv"
+    [[ -x "${UV}" ]] && return
+    local arch
+    case "$(uname -m)" in
+        x86_64|amd64)  arch=x86_64 ;;
+        aarch64|arm64) arch=aarch64 ;;
+        *)             die "no uv for this processor ($(uname -m)); install uv and run this again" ;;
+    esac
+    [[ "$(uname -s)" == Linux ]] || die "this launcher runs on Linux servers only"
+    local name="uv-${arch}-unknown-linux-gnu"
+    local url="https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/${name}.tar.gz"
+    say "downloading uv ${UV_VERSION}, which installs Python and the packages..."
+    mkdir -p "${INST}/bin"
+    local tmp; tmp="$(mktemp -d "${INST}/.uv.XXXXXX")"
+    fetch "${url}" "${tmp}/uv.tar.gz" && fetch "${url}.sha256" "${tmp}/uv.sha256" \
+        || { rm -rf "${tmp}"; die "could not download ${url}"; }
+    [[ "$(sha256 "${tmp}/uv.tar.gz")" == "$(cut -d' ' -f1 "${tmp}/uv.sha256")" ]] \
+        || { rm -rf "${tmp}"; die "the uv download is damaged (checksum); try again"; }
+    tar -xzf "${tmp}/uv.tar.gz" -C "${tmp}" && mv "${tmp}/${name}/uv" "${UV}"
+    rm -rf "${tmp}"
+}
+
+# A cluster's login node may cap the memory each program can address
+# (ulimit -v; 500 MB on some), far too little to install or import PyTorch.
+# There submit leaves the install to the job, on a compute node.
+MEM_CAP_KB="$(ulimit -v 2>/dev/null || echo unlimited)"
+capped() { [[ "${MEM_CAP_KB}" =~ ^[0-9]+$ ]] && (( MEM_CAP_KB < 4194304 )); }
+cap_text() { echo "$(( MEM_CAP_KB / 1024 )) MB"; }
+INSTALL_IN_JOB=0
+
+cap_refusal() {
+    local or=""
+    [[ "$1" == install ]] && or="
+
+  or install from a compute node: srun --cpus-per-task 4 --mem 16G --time 1:00:00 --pty $0 install"
+    die "this machine lets each program use at most $(cap_text) of memory (ulimit -v),
+  too little to $1 PyTorch: it is a login node, for editing and submitting jobs.
+  Run it as a SLURM job instead, which installs it on a compute node first:
+
+    $0 submit${or}"
+}
+
+# An install that failed inside a job may be a compute node without internet.
+install_failed() {
+    local hint=""
+    [[ -n "${SLURM_JOB_ID:-}" ]] && hint="
+  If this cluster's compute nodes cannot reach the internet, install from a
+  machine that can, with the same data folder: $0 install --data ${DATA}"
+    die "$1 (see above)${hint}"
+}
+
+# Once, and again when the package's requirements or the PyTorch build
+# change. The clone is installed in editable mode, so a pulled update to
+# SigProfilerExtractor takes effect on the next start without reinstalling.
+install() {
+    local want
+    want="$( (cat "${REPO_DIR}/setup.py" "${REPO_DIR}/pyproject.toml"; echo "${TORCH} ${PYTHON_VERSION}") | cksum | cut -d' ' -f1)"
+    if [[ "${1:-}" != force && -x "${VENV}/bin/python" && "$(cat "${INST}/installed" 2>/dev/null)" == "${want}" ]]; then
+        return
+    fi
+    if capped; then
+        # submit, and update of a job (which submits again): the job installs.
+        [[ "${COMMAND}" =~ ^(submit|update)$ ]] || cap_refusal install
+        rm -f "${INST}/installed"
+        INSTALL_IN_JOB=1
+        say "this login node lets each program use at most $(cap_text) of memory, too little to
+  install PyTorch, so the job installs it on its compute node first (several minutes, once)"
+        return
+    fi
+    command -v git >/dev/null 2>&1 || die "installing needs git (the version number comes from the clone's history)"
+    mkdir -p "${INST}"
+    get_uv
+    # uv's downloads, cache and Python all in the data folder.
+    export UV_CACHE_DIR="${INST}/uv-cache" UV_PYTHON_INSTALL_DIR="${INST}/python" \
+           UV_PYTHON_PREFERENCE=only-managed UV_NO_CONFIG=1
+    say "installing Python ${PYTHON_VERSION}, PyTorch (${TORCH}) and SigProfilerExtractor in ${INST}
+  (a few GB to download; several minutes, once)..."
+    rm -f "${INST}/installed"
+    "${UV}" venv --quiet --clear --python "${PYTHON_VERSION}" "${VENV}" \
+        || install_failed "could not create the Python environment"
+    # PyTorch first, from its own index, so SigProfilerExtractor keeps this build.
+    "${UV}" pip install --quiet --python "${VENV}/bin/python" torch \
+        --index-url "https://download.pytorch.org/whl/${TORCH}" \
+        || install_failed "could not install PyTorch (${TORCH})"
+    "${UV}" pip install --quiet --python "${VENV}/bin/python" -e "${REPO_DIR}" \
+        || install_failed "could not install SigProfilerExtractor"
+    "${VENV}/bin/python" -I -c "import SigProfilerExtractor, torch; print('spe-server: SigProfilerExtractor', SigProfilerExtractor.__version__, '/ PyTorch', torch.__version__)" \
+        || install_failed "the install does not work"
+    echo "${want}" > "${INST}/installed"
+    say "installed"
+}
+
+# The command that runs the app, in CMD.
+app_cmd() {
+    install
+    local envs=(
+        SPE_PORT="${PORT}" SPE_PORT_TRIES=100 SPE_DATA="${DATA}" SPE_HOME="${HOME}"
+        SPE_HOST_NAME="${HOST_FQDN}" SPE_SSH_USER="${USER}"
+        PATH="${VENV}/bin:${PATH}" VIRTUAL_ENV="${VENV}" PYTHONUNBUFFERED=1)
+    # The app sees all the server's CPUs; this caps its runs (Python 3.13).
+    [[ -n "${CPUS}" ]] && envs+=(PYTHON_CPU_COUNT="${CPUS}")
+    [[ "${GPU}" == 0 ]] && envs+=(CUDA_VISIBLE_DEVICES=)
+    [[ -n "${VIA}" ]] && envs+=(SPE_SSH_VIA="${VIA}")
+    CMD=(env -u PYTHONPATH -u PYTHONHOME -u PYTHONSTARTUP "${envs[@]}"
+         bash "${SERVER_DIR}/gateway/entrypoint.sh")
+}
+
+# ------------------------------------------------------------------ start / stop
+
+# Already running here, elsewhere, or as a job, for this data folder: say where.
+running_already() {
+    if [[ -n "${JOB_ID}" ]] && is_running; then
+        say "already running as SLURM job ${JOB_ID} ($(job_state)); stop it first to start another: $0 stop"
+        [[ -s "${STATE}/url" ]] && do_url
+        return 0
+    fi
+    JOB_ID=""; VIA=""
+    if is_running; then
+        local elsewhere; elsewhere="$(running_elsewhere || true)"
+        if [[ -n "${elsewhere}" ]]; then
+            say "already running on ${elsewhere} for this data folder (one copy per data folder:
+  its run records are shared). Use it, or stop it there first."
+        else
+            say "already running"
+        fi
+        do_url
+        return 0
+    fi
+    return 1
+}
+
+do_start() {
+    reuse_settings
+    running_already && return
+    capped && cap_refusal run
+    [[ "${GIVEN}" == *" MEMORY "* && -n "${MEMORY}" ]] && say "--memory limits only a SLURM job; kept for the next submit"
+    [[ "${GIVEN}" == *" GPUS "* && -n "${GPUS}" ]] && say "--gpus is what a SLURM job asks for; kept for the next submit"
+    rm -f "${STATE}/url"
+    app_cmd
+    save_settings
+    say "starting..."
+    # In the background, in its own session, so stop can end it and every run it started.
+    setsid nohup "${CMD[@]}" > "${STATE}/server.log" 2>&1 < /dev/null &
+    echo "$! ${HOST_FQDN}" > "${STATE}/server.pid"
+    # Ready once it has opened a port (the first free one from PORT, which
+    # the app itself finds) and written the link with it.
+    local waited=0
+    until [[ -s "${STATE}/url" ]] && port_open "$(url_port)"; do
+        if ! is_running; then
+            tail -n 30 "${STATE}/server.log" 2>/dev/null || true
+            die "it stopped while starting (log above)"
+        fi
+        (( waited++ < 180 )) || die "not ready after 3 minutes; see: $0 logs"
+        sleep 1
+    done
+    # The port it got is the one to try first next time, so the link stays.
+    if [[ "$(url_port)" != "${PORT}" ]]; then
+        say "port ${PORT} is taken on this server; using $(url_port)"
+        PORT="$(url_port)"
+        save_settings
+    fi
+    do_url
+    say "it keeps running after you log out; it does not come back after the server restarts (start it again)"
+}
+
+do_stop() {
+    load_settings
+    if [[ -n "${JOB_ID}" ]]; then
+        if is_running; then
+            # SIGTERM first: the app stops its runs, as with Quit.
+            scancel --signal=TERM --full "${JOB_ID}" 2>/dev/null || true
+            for _ in $(seq 40); do is_running || break; sleep 1; done
+            is_running && scancel "${JOB_ID}" 2>/dev/null || true
+        fi
+        say "stopped (SLURM job ${JOB_ID})"
+        return
+    fi
+    local elsewhere; elsewhere="$(running_elsewhere || true)"
+    if [[ -n "${elsewhere}" ]] && is_running; then
+        die "it runs on ${elsewhere}; stop it there: ssh ${elsewhere} ${SELF} stop --data ${DATA}"
+    fi
+    if is_running; then
+        local pid; read -r pid _ < "${STATE}/server.pid"
+        kill -TERM -- "-${pid}" 2>/dev/null || kill -TERM "${pid}" 2>/dev/null || true
+        for _ in $(seq 30); do kill -0 "${pid}" 2>/dev/null || break; sleep 1; done
+    fi
+    rm -f "${STATE}/server.pid"
+    say "stopped"
+}
+
+# ------------------------------------------------------------------ the rest
+
+do_url() {
+    [[ -s "${STATE}/url" ]] || die "no link yet: start it first ($0 start)"
+    local url host port tunnel
+    url="$(<"${STATE}/url")"
+    host="$(url_host)"; port="$(url_port)"
+    local where="firewall, off campus, a cloud VM"
+    if [[ -n "${VIA}" ]]; then
+        tunnel="ssh -N -L ${port}:${host}:${port} ${USER}@${VIA}"
+        where="firewall, off campus, a compute node"
+    else
+        tunnel="ssh -N -L ${port}:localhost:${port} ${USER}@${host}"
+    fi
+    cat <<EOF
+
+  SigProfilerExtractor Workbench is running on ${host}${JOB_ID:+ (SLURM job ${JOB_ID})}.
+
+  Open this link in your browser (keep it private: it is the key to the app):
+
+    ${url}
+
+  Not reachable from your computer (${where})? Run this on your
+  computer, keep it open, and use the link with localhost in place of
+  ${host}:
+
+    ${tunnel}
+
+  Your files: ${DATA}
+
+EOF
+}
+
+do_status() {
+    load_settings
+    if [[ -n "${JOB_ID}" ]] && is_running; then
+        local info; info="$(squeue -h -j "${JOB_ID}" -o '%T|%N|%L|%r' 2>/dev/null | head -n 1)"
+        IFS='|' read -r state node left reason <<< "${info}"
+        if [[ "${state}" == PENDING ]]; then
+            say "SLURM job ${JOB_ID} is waiting to start (${reason}); then: $0 url"
+        else
+            say "running as SLURM job ${JOB_ID} on ${node}, ${left} left; link: $0 url"
+        fi
+        return 0
+    fi
+    JOB_ID=""
+    local elsewhere; elsewhere="$(running_elsewhere || true)"
+    if is_running && [[ -s "${STATE}/url" ]] && port_open "$(url_port)" "$(url_host)"; then
+        say "running${elsewhere:+ on ${elsewhere}} (port $(url_port)); link: $0 url"
+    elif is_running; then
+        say "starting"
+    else
+        say "not running; start it with: $0 start (or as a SLURM job: $0 submit)"
+        return 1
+    fi
+}
+
+do_logs() { load_settings; exec tail -f "${STATE}/server.log"; }
+
+restart_with_settings() {
+    load_settings
+    local was_running=0
+    is_running && was_running=1
+    [[ "${was_running}" == 1 ]] && do_stop
+    "$@"
+    if [[ "${was_running}" == 0 ]]; then
+        say "start it with: $0 start (or $0 submit)"
+    elif [[ -n "${JOB_ID}" ]]; then
+        JOB_ID=""; do_submit
+    else
+        do_start
+    fi
+}
+
+do_install() {
+    reuse_settings
+    install force
+    save_settings
+    if is_running; then say "restart to use it: $0 stop && $0 start"; fi
+}
+
+new_token() { rm -f "${STATE}/token" "${STATE}/url"; say "new token on the next start"; }
+
+# ------------------------------------------------------------------ SLURM
+
+# The app in the foreground until it is stopped: what a SLURM job runs. A
+# port someone else on the node already has is skipped for the next free one.
+do_run() {
+    reuse_settings
+    rm -f "${STATE}/url"
+    app_cmd
+    exec "${CMD[@]}"
+}
+
+# Where an option's value comes from, for the request submit prints.
+origin() {
+    if [[ "${GIVEN}" == *" $1 "* ]]; then echo "given"
+    elif [[ -n "${!1}" ]]; then echo "as last time"
+    else echo "default"; fi
+}
+
+# What the job asks SLURM for, each with where it comes from and how to change it.
+print_request() {
+    say "submitting a SLURM job that asks for:"
+    printf '    %-8s %-18s %s\n' \
+        CPUs "${CPUS}" "${C_SRC}; change with --cpus N" \
+        memory "${MEMORY}" "${M_SRC}; change with --memory SIZE (e.g. 64G)" \
+        GPUs "${GPUS:-0}" "${G_SRC}; change with --gpus N"
+    if [[ -n "${TIME}" ]]; then
+        printf '    %-8s %-18s %s\n' time "${TIME}" "${T_SRC}; change with --time T (e.g. 8:00:00, 2-00:00:00)"
+    else
+        printf '    %-8s %-18s %s\n' time "partition default" "set a limit with --time T (e.g. 8:00:00, 2-00:00:00)"
+    fi
+    if [[ ${#SBATCH_ARGS[@]} -gt 0 ]]; then
+        printf '    %-8s %-18s  %s\n' other "${SBATCH_ARGS[*]}" "($(origin SBATCH_ARGS); options after --)"
+    else
+        printf '    %-8s %-18s %s\n' other "none" "add sbatch options after --, e.g. -- --partition=NAME"
+    fi
+    echo "  (each is remembered for the next submit)"
+}
+
+# The app as a SLURM job: installed here first (compute nodes may have no
+# internet), or by the job when this login node caps memory (see capped),
+# then the job runs "spe-server run" for as long as it lasts.
+do_submit() {
+    command -v sbatch >/dev/null 2>&1 || die "sbatch not found: this server does not submit SLURM jobs"
+    reuse_settings
+    running_already && return
+    C_SRC="$(origin CPUS)"; M_SRC="$(origin MEMORY)"; T_SRC="$(origin TIME)"
+    G_SRC="$(origin GPUS)"
+    [[ -n "${CPUS}" ]] || CPUS=8
+    [[ -n "${MEMORY}" ]] || MEMORY=32G
+    install
+    VIA="${HOST_FQDN}"
+    rm -f "${STATE}/url" "${STATE}/server.pid"
+    # TERM a minute before the time limit, so the app stops its runs cleanly.
+    local args=(--parsable --job-name "spe-server-$(id -un)" --output "${STATE}/server.log"
+                --cpus-per-task "${CPUS}" --mem "${MEMORY}" --signal=B:TERM@60)
+    [[ -n "${GPUS}" && "${GPUS}" != 0 ]] && args+=(--gres "gpu:${GPUS}")
+    [[ -n "${TIME}" ]] && args+=(--time "${TIME}")
+    args+=(${SBATCH_ARGS[@]+"${SBATCH_ARGS[@]}"})
+    local run; run="$(printf '%q ' "${SELF}" run --data "${DATA}")"
+    print_request
+    JOB_ID="$(sbatch "${args[@]}" --wrap "exec ${run}")" || die "sbatch refused the job (see above)"
+    JOB_ID="${JOB_ID%%;*}"
+    save_settings
+    say "SLURM job ${JOB_ID} submitted"
+    # Wait a while for it to start and answer; a queued job is left to start
+    # later. A job that installs first takes minutes more.
+    local waited=0 state limit=180 told=0
+    (( INSTALL_IN_JOB )) && limit=300      # polled every 5 s: 25 minutes
+    while (( waited++ < limit )); do
+        state="$(job_state)"
+        if (( INSTALL_IN_JOB && ! told )) && [[ "${state}" == RUNNING ]]; then
+            say "the job is running on $(squeue -h -j "${JOB_ID}" -o %N 2>/dev/null) and installing; the link follows
+  when it is ready (Ctrl-C here is safe: the job goes on; then: $0 url). Its log: $0 logs"
+            told=1
+        fi
+        if [[ -z "${state}" || "${state}" =~ ^(FAILED|CANCELLED|TIMEOUT|COMPLETED|NODE_FAIL|OUT_OF_MEMORY)$ ]]; then
+            tail -n 30 "${STATE}/server.log" 2>/dev/null || true
+            die "the job ended (log above: ${STATE}/server.log)"
+        fi
+        if [[ "${state}" == RUNNING && -s "${STATE}/url" ]] && port_open "$(url_port)" "$(url_host)"; then
+            do_url
+            say "it runs until the job's time limit or: $0 stop"
+            return
+        fi
+        sleep $(( INSTALL_IN_JOB ? 5 : 1 ))
+    done
+    if [[ "$(job_state)" == PENDING ]]; then
+        say "the job is waiting for resources ($(squeue -h -j "${JOB_ID}" -o %r 2>/dev/null)); once it starts: $0 url"
+    elif (( INSTALL_IN_JOB )); then
+        say "the job is still installing or starting; see: $0 logs, then: $0 url"
+    else
+        say "the job has started but the app is not answering yet; see: $0 logs, then: $0 url"
+    fi
+}
+
+case "${COMMAND}" in
+    start)     do_start ;;
+    stop)      do_stop ;;
+    status)    do_status ;;
+    url)       load_settings; do_url ;;
+    logs)      do_logs ;;
+    update)    restart_with_settings install force ;;
+    install)   do_install ;;
+    new-token) restart_with_settings new_token ;;
+    submit)    do_submit ;;
+    run)       do_run ;;
+    -h|--help|help) usage 0 ;;
+    *)         die "unknown command: ${COMMAND} (see --help)" ;;
+esac

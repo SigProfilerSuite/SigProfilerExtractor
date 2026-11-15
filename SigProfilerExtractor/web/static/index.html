@@ -207,6 +207,8 @@
                 <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M1.5 4.5v8a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1H8L6.5 3h-4a1 1 0 0 0-1 1z"/></svg>
                 <span id="inputChooseText">Choose the folder of variant calls</span>
               </button>
+              <button class="btn" id="inputUpload" type="button"
+                      title="Copy files from this computer to where the Workbench runs">Upload</button>
               <input type="text" class="mono" id="inputPath" autocomplete="off"
                      placeholder="or paste a path, then Enter" aria-label="Input path">
             </div>
@@ -487,6 +489,13 @@
         </div>
 
         <div id="resultsBody" class="stack hidden">
+          <div class="card" id="archiveCard">
+            <div class="hd"><h2>This results folder</h2>
+              <span class="note mono" id="archivePath"></span>
+              <span class="note" id="archiveSize"></span>
+              <button class="btn sm primary" id="archiveBtn" type="button"
+                      title="Every file in this folder, as one .zip">Download all as .zip</button></div>
+          </div>
           <div id="resNotes" class="stack-sm"></div>
           <div class="ctx-cards" id="ctxCards"></div>
 
@@ -596,6 +605,20 @@
     </main>
   </div>
 </div>
+
+<dialog id="picker" class="picker">
+  <div class="hd"><h3 id="pickerTitle">Choose a folder</h3></div>
+  <div class="places" id="pickerPlaces"></div>
+  <div class="path" id="pickerPath"></div>
+  <div class="entries" id="pickerEntries"></div>
+  <div class="ft">
+    <span class="muted" id="pickerHint"></span>
+    <button class="btn" id="pickerCancel" type="button">Cancel</button>
+    <button class="btn primary" id="pickerUse" type="button">Use this folder</button>
+  </div>
+</dialog>
+
+<input type="file" id="fileInput" class="hidden" aria-hidden="true" tabindex="-1">
 
 <dialog id="quitDialog">
   <div class="hd"><h3>Quit the Workbench?</h3></div>
