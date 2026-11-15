@@ -1,21 +1,21 @@
 #!/bin/bash
 #
-# spe-workbench -- run the SigProfilerExtractor Workbench on this server and
+# spe-server -- run the SigProfilerExtractor Workbench on this server and
 # use it from the browser on your own computer.
 #
-#   ./spe-workbench start        start it and print the link (first time: installs it)
-#   ./spe-workbench url          print the link again
-#   ./spe-workbench status       is it running?
-#   ./spe-workbench logs         follow its log
-#   ./spe-workbench stop         stop it, and any run in progress
-#   ./spe-workbench update       reinstall from this clone and restart (git pull first)
-#   ./spe-workbench install      install only (start does it when needed)
-#   ./spe-workbench new-token    make a new link; the old one stops working
+#   ./spe-server start        start it and print the link (first time: installs it)
+#   ./spe-server url          print the link again
+#   ./spe-server status       is it running?
+#   ./spe-server logs         follow its log
+#   ./spe-server stop         stop it, and any run in progress
+#   ./spe-server update       reinstall from this clone and restart (git pull first)
+#   ./spe-server install      install only (start does it when needed)
+#   ./spe-server new-token    make a new link; the old one stops working
 #
-#   ./spe-workbench submit [options] [-- sbatch options]
+#   ./spe-server submit [options] [-- sbatch options]
 #                                run it as a SLURM job instead; url, status, logs
 #                                and stop then work on the job (stop cancels it)
-#   ./spe-workbench run          run it in the foreground (what the job runs)
+#   ./spe-server run          run it in the foreground (what the job runs)
 #
 # Options (none are needed; each is remembered for the next start or submit):
 #   --data DIR       uploads, results, genomes, run records and the install
@@ -53,8 +53,8 @@ UV_VERSION=0.13.6        # uv, when the server has none
 PYTHON_VERSION=3.13      # reads PYTHON_CPU_COUNT, which holds runs to --cpus
 MIN_FREE_GB=20           # for the default data folder: the install (~8 GB), a genome, results
 
-die() { echo "spe-workbench: $*" >&2; exit 1; }
-say() { echo "spe-workbench: $*"; }
+die() { echo "spe-server: $*" >&2; exit 1; }
+say() { echo "spe-server: $*"; }
 
 usage() { awk 'NR >= 3 && !/^#/ { exit } NR >= 3' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 
@@ -62,7 +62,7 @@ SELF="$(readlink -f "${BASH_SOURCE[0]}")"
 SERVER_DIR="$(dirname "${SELF}")"       # server/ in the repository
 REPO_DIR="$(dirname "${SERVER_DIR}")"
 [[ -f "${REPO_DIR}/setup.py" && -d "${REPO_DIR}/SigProfilerExtractor/web" ]] \
-    || die "run this from a clone of the repository (SigProfilerExtractor/server/spe-workbench)"
+    || die "run this from a clone of the repository (SigProfilerExtractor/server/spe-server)"
 
 # ------------------------------------------------------------------ arguments
 
@@ -100,7 +100,12 @@ free_gb() { df -Pk "$1" 2>/dev/null | awk 'NR == 2 { print int($4 / 1048576) }';
 # The data folder: --data, else the one last given on this server, else
 # spe-data beside this clone. The install alone is about 8 GB, so a folder
 # without one must have room: 20 GB for the default, 10 for one you chose.
-REMEMBERED="${XDG_CONFIG_HOME:-${HOME}/.config}/spe-workbench/data-$(hostname -s)"
+REMEMBERED="${XDG_CONFIG_HOME:-${HOME}/.config}/spe-server/data-$(hostname -s)"
+# The launcher was called spe-workbench before; keep the folder it remembered.
+OLD_REMEMBERED="${XDG_CONFIG_HOME:-${HOME}/.config}/spe-workbench/data-$(hostname -s)"
+if [[ ! -s "${REMEMBERED}" && -s "${OLD_REMEMBERED}" ]]; then
+    mkdir -p "$(dirname "${REMEMBERED}")" && cp "${OLD_REMEMBERED}" "${REMEMBERED}"
+fi
 CHOSEN=1
 if [[ -z "${DATA}" && -s "${REMEMBERED}" ]]; then
     DATA="$(<"${REMEMBERED}")"
@@ -274,7 +279,7 @@ install() {
         || die "could not install PyTorch (${TORCH}) (see above)"
     "${UV}" pip install --quiet --python "${VENV}/bin/python" -e "${REPO_DIR}" \
         || die "could not install SigProfilerExtractor (see above)"
-    "${VENV}/bin/python" -I -c "import SigProfilerExtractor, torch; print('spe-workbench: SigProfilerExtractor', SigProfilerExtractor.__version__, '/ PyTorch', torch.__version__)" \
+    "${VENV}/bin/python" -I -c "import SigProfilerExtractor, torch; print('spe-server: SigProfilerExtractor', SigProfilerExtractor.__version__, '/ PyTorch', torch.__version__)" \
         || die "the install does not work (see above)"
     echo "${want}" > "${INST}/installed"
     say "installed"
@@ -499,7 +504,7 @@ print_request() {
 }
 
 # The app as a SLURM job: installed here first (compute nodes may have no
-# internet), then the job runs "spe-workbench run" for as long as it lasts.
+# internet), then the job runs "spe-server run" for as long as it lasts.
 do_submit() {
     command -v sbatch >/dev/null 2>&1 || die "sbatch not found: this server does not submit SLURM jobs"
     reuse_settings
@@ -512,7 +517,7 @@ do_submit() {
     VIA="${HOST_FQDN}"
     rm -f "${STATE}/url" "${STATE}/server.pid"
     # TERM a minute before the time limit, so the app stops its runs cleanly.
-    local args=(--parsable --job-name "spe-workbench-$(id -un)" --output "${STATE}/server.log"
+    local args=(--parsable --job-name "spe-server-$(id -un)" --output "${STATE}/server.log"
                 --cpus-per-task "${CPUS}" --mem "${MEMORY}" --signal=B:TERM@60)
     [[ -n "${GPUS}" && "${GPUS}" != 0 ]] && args+=(--gres "gpu:${GPUS}")
     [[ -n "${TIME}" ]] && args+=(--time "${TIME}")

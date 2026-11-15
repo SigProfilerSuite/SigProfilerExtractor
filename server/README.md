@@ -6,7 +6,7 @@ computer: upload inputs, start runs, follow them, explore results and download
 them, the same way you use a Jupyter server.
 
 - **No admin rights needed**: no `sudo`, no Docker, no system Python. One
-  script, `spe-workbench`, installs everything into a folder of yours.
+  script, `spe-server`, installs everything into a folder of yours.
 - **It runs as you**: each person starts their own copy, with their own link,
   files and runs.
 - **GPUs**: it installs PyTorch's CUDA 12.8 build, which uses an NVIDIA GPU
@@ -33,7 +33,7 @@ keep it private.
 
 The launcher runs the app in one of two ways. Pick by where you are logged in:
 
-| | `./spe-workbench start` | `./spe-workbench submit` |
+| | `./spe-server start` | `./spe-server submit` |
 |---|---|---|
 | **Use it on** | a machine you may run work on directly: a lab workstation, a cloud VM, an interactive session on a compute node | a cluster's login node, where SLURM (`sbatch`) runs the work |
 | **Where the app runs** | on this machine, in the background | on a compute node SLURM picks, as a batch job |
@@ -68,7 +68,7 @@ cd SigProfilerExtractor/server
 ## 2. Start it
 
 ```bash
-./spe-workbench start
+./spe-server start
 ```
 
 The first start downloads [uv](https://docs.astral.sh/uv/), which installs
@@ -91,7 +91,7 @@ minutes, once). Then it starts the app in the background and prints:
   Your files: /path/with/room/spe-data
 ```
 
-On a cluster's login node, run `./spe-workbench submit` instead ([which
+On a cluster's login node, run `./spe-server submit` instead ([which
 one?](#which-one-start-or-submit)): it installs the same way, then submits a
 SLURM job that runs the app on a compute node, and prints the link once the job
 has started ([on a SLURM cluster](#on-a-slurm-cluster) has the options).
@@ -112,7 +112,7 @@ your computer. Make an SSH tunnel:
 3. Open the link with `localhost` in place of the server's name:
    `http://localhost:8765/?token=45abac...`
 
-Print the link and the tunnel command again any time with `./spe-workbench url`.
+Print the link and the tunnel command again any time with `./spe-server url`.
 
 ## 4. Use it
 
@@ -149,11 +149,11 @@ out of the server.
 ## 5. Stop it
 
 ```bash
-./spe-workbench stop
+./spe-server stop
 ```
 
 This stops the app and any run in progress; so does **Quit** in the
-Workbench's top bar. Start it again with `./spe-workbench start`; the link
+Workbench's top bar. Start it again with `./spe-server start`; the link
 stays the same. It does not come back by itself after the server restarts.
 
 ## On a SLURM cluster
@@ -162,7 +162,7 @@ Clone on a disk the compute nodes share (a lab or project share), then, on
 the login node:
 
 ```bash
-./spe-workbench submit --gpus 1 --cpus 32 --memory 128G --time 2-00:00:00 -- --partition=NAME
+./spe-server submit --gpus 1 --cpus 32 --memory 128G --time 2-00:00:00 -- --partition=NAME
 ```
 
 It installs on the login node first (compute nodes often have no internet),
@@ -170,7 +170,7 @@ submits a job that runs the Workbench, waits for the job to start, and prints
 the link. Before submitting it shows exactly what the job asks for:
 
 ```
-spe-workbench: submitting a SLURM job that asks for:
+spe-server: submitting a SLURM job that asks for:
     CPUs     32                 given; change with --cpus N
     memory   128G               given; change with --memory SIZE (e.g. 64G)
     GPUs     1                  given; change with --gpus N
@@ -219,16 +219,16 @@ format=name,maxwall` the QOS limits; your cluster's documentation, which
 accounts you have. Asking for more than a partition allows leaves the job
 waiting forever or refused; asking for less makes it start sooner.
 
-**Changing them later:** `./spe-workbench stop`, then `submit` again with the
+**Changing them later:** `./spe-server stop`, then `submit` again with the
 new options. Options you leave out keep their last value, so
-`./spe-workbench submit --time 1-00:00:00` changes only the time limit.
+`./spe-server submit --time 1-00:00:00` changes only the time limit.
 
 ### Using the job
 
 The other commands then work on the job: `url` prints the link (also once a
 waiting job starts), `status` shows the node and the time left or why it is
 still waiting, `logs` follows its log, and `stop` cancels it, stopping any
-run first. `squeue -u $USER` shows it as `spe-workbench-<you>`.
+run first. `squeue -u $USER` shows it as `spe-server-<you>`.
 
 Compute nodes are usually reachable only from inside the cluster, so the
 printed tunnel goes through the login node:
@@ -245,7 +245,7 @@ node's name.
 From `dgx-head01`:
 
 ```bash
-./spe-workbench submit --gpus 1 --cpus 32 --memory 128G --time 2-00:00:00 \
+./spe-server submit --gpus 1 --cpus 32 --memory 128G --time 2-00:00:00 \
   -- --partition=dgx --qos=freetier
 ```
 
@@ -256,16 +256,16 @@ From `dgx-head01`:
 
 | Command | Does |
 |---|---|
-| `./spe-workbench start` | Start it and print the link |
-| `./spe-workbench submit` | Run it as a SLURM job instead |
-| `./spe-workbench url` | Print the link and the tunnel command again |
-| `./spe-workbench status` | Is it running? (a job: where, and the time left) |
-| `./spe-workbench logs` | Follow its log (Ctrl-C to leave; the app keeps running) |
-| `./spe-workbench stop` | Stop it, and any run in progress |
-| `./spe-workbench new-token` | New link; the old one stops working |
-| `./spe-workbench update` | Reinstall from the clone and restart (`git pull` first) |
-| `./spe-workbench install` | Install only (`start` does it when needed) |
-| `./spe-workbench --help` | All of this, in the terminal |
+| `./spe-server start` | Start it and print the link |
+| `./spe-server submit` | Run it as a SLURM job instead |
+| `./spe-server url` | Print the link and the tunnel command again |
+| `./spe-server status` | Is it running? (a job: where, and the time left) |
+| `./spe-server logs` | Follow its log (Ctrl-C to leave; the app keeps running) |
+| `./spe-server stop` | Stop it, and any run in progress |
+| `./spe-server new-token` | New link; the old one stops working |
+| `./spe-server update` | Reinstall from the clone and restart (`git pull` first) |
+| `./spe-server install` | Install only (`start` does it when needed) |
+| `./spe-server --help` | All of this, in the terminal |
 
 ## Options
 
@@ -301,9 +301,11 @@ None are needed. Each one you give is remembered for the next `start` or
   CPUs, or all. The Computer fields in Advanced settings are capped there, and
   a run asking for more is refused. On a shared server, leave room for others
   with `--cpus`.
-- **Updating.** `git pull`, then `./spe-workbench stop` and `start` to run the
+- **Updating.** `git pull`, then `./spe-server stop` and `start` to run the
   new code; changed requirements are installed on that start. Or
-  `./spe-workbench update`, which reinstalls everything and restarts.
+  `./spe-server update`, which reinstalls everything and restarts.
+  The launcher was called `spe-workbench` before; `spe-server` finds the
+  same data folder, install and running app or job.
 - **Two people on one server** each clone and start their own copy; they get
   different ports, tokens, files and runs.
 
@@ -311,12 +313,12 @@ None are needed. Each one you give is remembered for the next `start` or
 
 **"that disk has only N GB free"**: the data folder would be on a small disk,
 such as a home folder. Give a folder on a larger one; it is remembered:
-`./spe-workbench start --data /lab/share/spe-data`.
+`./spe-server start --data /lab/share/spe-data`.
 
 **"could not download ..." or "could not install PyTorch"**: the server cannot
 reach the internet. If it uses a proxy, set `https_proxy` before starting. On
 a cluster, install on the login node: `submit` does that, or run
-`./spe-workbench install` there.
+`./spe-server install` there.
 
 **The link does not load (it times out)**: use the SSH tunnel ([step 3](#3-open-it-in-your-browser)).
 
@@ -336,11 +338,11 @@ or open the whole link. After `new-token`, old links stop working.
 server, check that `nvidia-smi` lists it, and that `--no-gpu` is not set
 (`--gpu` undoes it). A driver older than 525 cannot run the CUDA 12.8 build.
 
-**A SLURM job keeps waiting**: `./spe-workbench status` shows why (the
+**A SLURM job keeps waiting**: `./spe-server status` shows why (the
 reason SLURM gives). Ask for less (`--cpus`, `--memory`, `--gpus`, `--time`)
 or another partition.
 
-**The job ends at once**: `./spe-workbench logs` shows why. Often the cluster
+**The job ends at once**: `./spe-server logs` shows why. Often the cluster
 requires an option, such as `-- --partition=NAME --account=NAME`, or the data
 folder is not on a disk the compute nodes can see.
 
@@ -348,7 +350,7 @@ folder is not on a disk the compute nodes can see.
 or been preempted. Submit again with more `--memory` or `--time`, or a QOS
 that is not preempted.
 
-Anything else: `./spe-workbench logs` usually says what went wrong.
+Anything else: `./spe-server logs` usually says what went wrong.
 
 ## On a cloud VM
 
@@ -364,7 +366,7 @@ Anything else: `./spe-workbench logs` usually says what went wrong.
 
 The token grants everything the Workbench can do: read any file you can on
 the server and run processes as you. Treat it like a password: do not paste
-it in shared documents or chats. `./spe-workbench new-token` replaces it. The
+it in shared documents or chats. `./spe-server new-token` replaces it. The
 port is plain HTTP, so on a network you do not trust, use the SSH tunnel
 instead of opening the port.
 
@@ -389,7 +391,7 @@ run. It adds:
 
 | Path in `server/` | What |
 |---|---|
-| `spe-workbench` | The launcher |
+| `spe-server` | The launcher |
 | `gateway/spe_gateway.py` | Token sign-in, free-port choice, file settings, resources |
 | `gateway/static/` | The sign-in page's styles, and the resources panel's script and styles |
 | `gateway/entrypoint.sh` | Start-up script the launcher runs, and its settings |

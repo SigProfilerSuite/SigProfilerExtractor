@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # Start-up for the SigProfilerExtractor Workbench on a server: the launcher
-# (../spe-workbench) runs this with the installed Python first on PATH.
+# (../spe-server) runs this with the installed Python first on PATH.
 #
 # Runs the Workbench behind spe_gateway.py, which asks for this server's token
 # and adds upload, .zip download and the resources panel. Everything the app
@@ -45,7 +45,7 @@ export MPLCONFIGDIR="${DATA}/.cache/matplotlib"
 mkdir -p "${DATA}/uploads" "${DATA}/SigProfilerExtractor_results" "${DATA}/references" "${MPLCONFIGDIR}"
 
 # One token per data folder, kept across restarts so the link can be
-# bookmarked. Delete .workbench/token (spe-workbench new-token) for a new one.
+# bookmarked. Delete .workbench/token (spe-server new-token) for a new one.
 TOKEN_FILE="${STATE}/token"
 if [[ -n "${SPE_TOKEN:-}" ]]; then
     TOKEN="${SPE_TOKEN}"

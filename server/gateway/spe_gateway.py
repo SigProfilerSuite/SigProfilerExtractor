@@ -22,7 +22,7 @@ laptop, so this wrapper runs the very same server and handler, but:
   to those CPUs.
 
 Run it with the Workbench's own interpreter (it imports the installed
-package); the launcher, ../spe-workbench, does that. The token comes from the
+package); the launcher, ../spe-server, does that. The token comes from the
 SPE_GATEWAY_TOKEN environment variable, never argv, which other users on the
 node can read with ps.
 """
