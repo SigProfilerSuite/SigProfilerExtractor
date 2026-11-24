@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Changed
+- SigProfilerExtractor now requires Python 3.10 or newer. reportlab 5.1.0, the PDF library SigProfilerAssignment uses, refuses to import on Python 3.9 although pip still installs it there, so on 3.9 every extraction failed with `ImportError: reportlab requires 3.10+`.
+
+### Fixed
+- The Workbench launchers (`launch_web.command`, `launch_web.sh`, `launch_web.bat`) use Python 3.10 or newer, also when an older Python comes first, such as the Python 3.9 that comes with macOS, and say plainly what to install when there is none. They used to build the Workbench's environment with Python 3.9, where the Workbench opened but every run failed with the ImportError above. An environment made earlier with an older Python is set up again.
+
 ## [1.6.2] - 2026-11-15
 
 ### Added
