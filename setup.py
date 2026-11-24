@@ -42,7 +42,7 @@ setup(
         "web-tests": ["pytest", "playwright"],
     },
     include_package_data=True,
-    python_requires=">=3.9",
+    python_requires=">=3.10",
     entry_points={
         "console_scripts": [
             "SigProfilerExtractor=SigProfilerExtractor.sigprofilerextractor_cli:main_function",

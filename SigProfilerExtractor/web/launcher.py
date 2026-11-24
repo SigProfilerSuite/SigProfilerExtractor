@@ -33,6 +33,35 @@ from pathlib import Path
 
 _PACKAGING_FILES = ("setup.py", "pyproject.toml")
 
+# On 3.9 pip still installs reportlab 5.1 (the PDF library
+# SigProfilerAssignment uses), which then refuses to import: the Workbench
+# would open, and every run would fail with an ImportError. The launch
+# scripts look for a new enough Python; this catches a direct start.
+MIN_PYTHON = (3, 10)
+
+
+def python_too_old(version_info=None, executable: str | None = None) -> str | None:
+    """What to tell someone starting the Workbench with a Python older than
+    MIN_PYTHON, or None when this Python will do."""
+    version_info = version_info or sys.version_info
+    if tuple(version_info[:2]) >= MIN_PYTHON:
+        return None
+    have = ".".join(str(part) for part in version_info[:3])
+    need = ".".join(str(part) for part in MIN_PYTHON)
+    return (
+        f"The SigProfilerExtractor Workbench needs Python {need} or newer, "
+        f"and {executable or sys.executable} is Python {have}.\n"
+        "Install the latest Python from https://www.python.org/downloads/ "
+        "and then open the Workbench again."
+    )
+
+
+def _refuse_old_python() -> bool:
+    problem = python_too_old()
+    if problem:
+        print(problem, file=sys.stderr, flush=True)
+    return problem is not None
+
 
 def _repo_root() -> Path:
     # SigProfilerExtractor/web/launcher.py -> .../web -> .../SigProfilerExtractor -> repo root
@@ -391,6 +420,8 @@ def managed_main(argv: list[str] | None = None) -> int:
     args = _build_parser("SigProfilerExtractor Workbench launcher").parse_args(argv)
     if args.stop:
         return 0 if stop_server() else 1
+    if _refuse_old_python():
+        return 1
     if args.ensure_deps_only:
         ensure_dependencies(_repo_root(), force=args.reinstall)
         return 0
@@ -404,6 +435,8 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_parser("sigprofilerextractor-web").parse_args(argv)
     if args.stop:
         return 0 if stop_server() else 1
+    if _refuse_old_python():
+        return 1
     if args.reinstall:
         print(
             "--reinstall has no effect for the installed console command; "

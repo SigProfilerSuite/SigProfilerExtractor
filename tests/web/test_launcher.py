@@ -297,3 +297,40 @@ def test_no_install_when_the_fingerprint_matches(install_env, monkeypatch, capsy
     launcher.ensure_dependencies(repo)
     assert runs.commands == []
     assert "skipping install" in capsys.readouterr().out
+
+
+# ---------------------------------------------------- Python 3.10 or newer
+
+
+def test_an_old_python_is_told_what_to_install():
+    message = launcher.python_too_old((3, 9, 6, "final", 0), "/usr/bin/python3")
+    assert "needs Python 3.10 or newer" in message
+    assert "/usr/bin/python3 is Python 3.9.6" in message
+    assert "https://www.python.org/downloads/" in message
+
+
+@pytest.mark.parametrize("version", [(3, 10, 0), (3, 12, 4), (3, 14, 0), (4, 0, 0)])
+def test_python_3_10_and_newer_will_do(version):
+    assert launcher.python_too_old(version) is None
+
+
+@pytest.mark.parametrize("main", [launcher.managed_main, launcher.main])
+def test_an_old_python_stops_before_installing_or_starting(main, monkeypatch, capsys):
+    monkeypatch.setattr(launcher, "MIN_PYTHON", (99, 0))
+
+    def must_not_run(*_args, **_kwargs):
+        raise AssertionError("installed or started on a Python that is too old")
+
+    monkeypatch.setattr(launcher, "ensure_dependencies", must_not_run)
+    monkeypatch.setattr(launcher, "_run_server", must_not_run)
+    assert main(["--no-launch"]) == 1
+    assert main(["--ensure-deps-only"] if main is launcher.managed_main else []) == 1
+    assert "needs Python 99.0 or newer" in capsys.readouterr().err
+
+
+def test_an_old_python_can_still_stop_a_workbench(monkeypatch, capsys):
+    # An old Workbench environment is stopped before it is set up again.
+    monkeypatch.setattr(launcher, "MIN_PYTHON", (99, 0))
+    monkeypatch.setattr(launcher, "stop_server", lambda: True)
+    assert launcher.managed_main(["--stop"]) == 0
+    assert "needs Python" not in capsys.readouterr().err

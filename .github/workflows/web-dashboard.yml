@@ -41,6 +41,25 @@ jobs:
         with:
           python-version: '3.12'
 
+      # The python3 that comes with macOS is 3.9, which the Workbench cannot
+      # use (reportlab 5.1 refuses to import there).
+      - name: With only the Python that comes with macOS, the launcher says what to install
+        timeout-minutes: 5
+        run: |
+          /usr/bin/python3 --version
+          set +e
+          PATH=/usr/bin:/bin:/usr/sbin:/sbin bash ./launch_web.sh --no-launch > old-python.log 2>&1
+          code=$?
+          set -e
+          cat old-python.log
+          test "$code" -eq 1
+          grep -q "needs Python 3.10 or newer" old-python.log
+          grep -q "comes with macOS" old-python.log
+          test ! -d .venv-dashboard
+
+      - name: Leave an environment made with that Python, to be set up again
+        run: /usr/bin/python3 -m venv .venv-dashboard
+
       - name: First launch installs dependencies
         run: |
           chmod +x launch_web.sh
@@ -52,6 +71,7 @@ jobs:
           done
           grep -q "Workbench running at" first-run.log || (cat first-run.log; exit 1)
           cat first-run.log
+          grep -q "made with Python 3.9.*setting it up again" first-run.log
           ./launch_web.sh --stop
           wait $LAUNCH_PID || true
 
@@ -85,6 +105,35 @@ jobs:
         with:
           python-version: '3.12'
 
+      # Python 3.9 cannot run the Workbench (reportlab 5.1 refuses to import
+      # there). Installed beside 3.12 without going on PATH.
+      - name: Set up Python 3.9
+        id: py39
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.9'
+          update-environment: false
+
+      - name: With only Python 3.9, the launcher says what to install
+        shell: cmd
+        timeout-minutes: 5
+        run: |
+          for %%F in ("${{ steps.py39.outputs.python-path }}") do set "PY39_DIR=%%~dpF"
+          set "PATH=%PY39_DIR%;%SystemRoot%\System32"
+          where py >nul 2>nul && (echo py is still on PATH, so Python 3.9 is not the only Python & exit /b 1)
+          python --version
+          call launch_web.bat --no-launch > old-python.log 2>&1
+          set CODE=%ERRORLEVEL%
+          type old-python.log
+          if not "%CODE%"=="1" exit /b 1
+          findstr /C:"needs Python 3.10 or newer" old-python.log >nul || exit /b 1
+          findstr /C:"version 3.9" old-python.log >nul || exit /b 1
+          if exist .venv-dashboard exit /b 1
+
+      - name: Leave an environment made with Python 3.9, to be set up again
+        shell: cmd
+        run: '"${{ steps.py39.outputs.python-path }}" -m venv .venv-dashboard'
+
       - name: First launch installs dependencies
         shell: cmd
         run: |
@@ -96,6 +145,7 @@ jobs:
           :first_up
           type first-run.log
           findstr /C:"Workbench running at" first-run.log >nul || exit /b 1
+          findstr /C:"setting it up again" first-run.log >nul || exit /b 1
           launch_web.bat --stop
 
       - name: Second launch installs nothing

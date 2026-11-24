@@ -95,7 +95,9 @@ Download or clone this repository, then double-click the launcher in its folder:
 | Windows | `launch_web.bat` | `uninstall_web.bat` |
 | Linux | `./launch_web.sh` in a terminal | `./uninstall_web.sh` |
 
-- The only requirement is **Python 3.9 or newer** ([python.org](https://www.python.org/downloads/)).
+- The only requirement is **Python 3.10 or newer** ([python.org](https://www.python.org/downloads/)).
+  The Python that comes with macOS (`/usr/bin/python3`, version 3.9) is too old; the
+  launcher finds a newer one installed beside it, or says what to install.
 - The first start creates a private Python environment, `.venv-dashboard`, inside this
   folder and installs SigProfilerExtractor into it. This takes a few minutes (PyTorch is
   large) and happens once. Nothing is installed anywhere else on the computer.
